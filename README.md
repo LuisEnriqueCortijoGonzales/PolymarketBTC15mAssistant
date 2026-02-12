@@ -243,6 +243,31 @@ npm install
 npm start
 ```
 
+
+## Estrategia rápida (triple comparación)
+
+El bot ahora calcula una comparación de 3 fuentes por moneda:
+
+- **Binance spot** (referencia de liquidez y micro-movimiento)
+- **Chainlink directo** (fuente canónica de resolución)
+- **Polymarket 15m** (precio actual implícito de UP/DOWN)
+
+Con estas 3 fuentes estima un **"Poly futuro"** (precio esperado en centavos del lado UP) y un edge en centavos respecto al precio actual de mercado.
+
+En pantalla verás:
+
+- `Tri-precio`: Binance / Chainlink / Poly UP actual
+- `Poly futuro`: precio proyectado UP, edge estimado y acción rápida sugerida
+
+Acciones sugeridas:
+
+- `BUY_UP_FAST` cuando el valor futuro proyectado de UP supera materialmente al precio actual de UP.
+- `BUY_DOWN_FAST` cuando el valor futuro proyectado de UP queda materialmente por debajo del precio actual de UP.
+- `HOLD` si no hay ventaja suficiente o faltan datos.
+
+> Importante: es una estrategia de alta frecuencia y riesgo alto; usa tamaño pequeño y valida siempre spread/liquidez.
+
+
 ## Notas / Solución de problemas
 
 - Si no ves actualizaciones de Chainlink:

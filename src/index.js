@@ -165,6 +165,85 @@ function narrativeFromSlope(slope) {
   return Number(slope) > 0 ? "LONG" : "SHORT";
 }
 
+
+
+function computePolyFutureProjection({
+  marketUp,
+  marketDown,
+  chainlinkPrice,
+  binancePrice,
+  priceToBeat,
+  sigma,
+  tSec,
+  wModel = 0.7
+}) {
+  const mUp = Number(marketUp);
+  const mDown = Number(marketDown);
+  const s = Number(chainlinkPrice);
+  const b = Number(binancePrice);
+  const k = Number(priceToBeat);
+  const t = Number(tSec);
+  const sig = Number(sigma);
+
+  const hasMarket = Number.isFinite(mUp) || Number.isFinite(mDown);
+  const marketUpProb = Number.isFinite(mUp)
+    ? (mUp > 1 ? mUp / 100 : mUp)
+    : Number.isFinite(mDown)
+      ? (mDown > 1 ? 1 - (mDown / 100) : 1 - mDown)
+      : null;
+
+  if (!Number.isFinite(s) || !Number.isFinite(k) || !Number.isFinite(t) || t <= 0 || !Number.isFinite(sig) || sig <= 0) {
+    return {
+      ok: false,
+      marketUpProb,
+      futureUpProb: null,
+      futureUpCents: null,
+      edgeVsMarketUpCents: null,
+      strategy: hasMarket ? "HOLD" : "N/A"
+    };
+  }
+
+  const basis = (Number.isFinite(b) && s !== 0) ? ((b - s) / s) : 0;
+  const basisImpact = Math.max(-0.01, Math.min(0.01, basis * 0.35));
+  const sAdjusted = s * (1 + basisImpact);
+
+  const quant = probUpLognormal(sAdjusted, k, Math.max(1, t), sig);
+  if (!quant) {
+    return {
+      ok: false,
+      marketUpProb,
+      futureUpProb: null,
+      futureUpCents: null,
+      edgeVsMarketUpCents: null,
+      strategy: hasMarket ? "HOLD" : "N/A"
+    };
+  }
+
+  const modelUp = quant.pUp;
+  const futureUpProb = marketUpProb === null
+    ? modelUp
+    : (wModel * modelUp) + ((1 - wModel) * marketUpProb);
+
+  const clamped = Math.max(0.001, Math.min(0.999, futureUpProb));
+  const futureUpCents = clamped * 100;
+  const edgeVsMarketUpCents = marketUpProb === null ? null : (futureUpCents - (marketUpProb * 100));
+
+  let strategy = "HOLD";
+  if (edgeVsMarketUpCents !== null) {
+    if (edgeVsMarketUpCents >= 2.5) strategy = "BUY_UP_FAST";
+    else if (edgeVsMarketUpCents <= -2.5) strategy = "BUY_DOWN_FAST";
+  }
+
+  return {
+    ok: true,
+    marketUpProb,
+    futureUpProb: clamped,
+    futureUpCents,
+    edgeVsMarketUpCents,
+    strategy
+  };
+}
+
 function formatProbPct(p, digits = 0) {
   if (p === null || p === undefined || !Number.isFinite(Number(p))) return "-";
   return `${(Number(p) * 100).toFixed(digits)}%`;
@@ -422,7 +501,10 @@ async function main() {
     "mkt_down",
     "edge_up",
     "edge_down",
-    "recommendation"
+    "recommendation",
+    "poly_future_up_cents",
+    "poly_future_edge_cents",
+    "poly_future_strategy"
   ];
 
   while (true) {
@@ -609,6 +691,28 @@ async function main() {
       pShort = modelDown;
       predictValue = `${ANSI.green}LONG${ANSI.reset} ${ANSI.green}${formatProbPct(pLong, 0)}${ANSI.reset} / ${ANSI.red}SHORT${ANSI.reset} ${ANSI.red}${formatProbPct(pShort, 0)}${ANSI.reset}`;
       signal = rec.action === "ENTER" ? (rec.side === "UP" ? "COMPRAR SUBE" : "COMPRAR BAJA") : "SIN OPERACIÓN";
+
+      const polyProjection = computePolyFutureProjection({
+        marketUp,
+        marketDown,
+        chainlinkPrice: currentPrice,
+        binancePrice: spotPrice,
+        priceToBeat,
+        sigma,
+        tSec,
+        wModel: CONFIG.quant.wQuant
+      });
+
+      const triCompareLine = kv(
+        "Tri-precio:",
+        `Binance $${formatNumber(spotPrice, 4)} | Chainlink $${formatNumber(currentPrice, 4)} | Poly UP ${formatNumber(polyProjection?.marketUpProb !== null ? (polyProjection.marketUpProb * 100) : null, 1)}¢`
+      );
+
+      const polyFutureLine = kv(
+        "Poly futuro:",
+        `${formatNumber(polyProjection.futureUpCents, 1)}¢ UP | edge ${polyProjection.edgeVsMarketUpCents === null ? '-' : `${polyProjection.edgeVsMarketUpCents >= 0 ? '+' : ''}${polyProjection.edgeVsMarketUpCents.toFixed(2)}¢`} | ${polyProjection.strategy}`
+      );
+
       const currentPriceBaseLine = colorPriceLine({
         label: "Precio actual",
         price: currentPrice,
@@ -689,6 +793,8 @@ async function main() {
         "",
         kv("Modelo final:", predictValue),
         kv("Modelo quant:", `${formatProbPct(quant?.pUp, 1)} / ${formatProbPct(quant?.pDown, 1)} | σ=${sigma !== null ? sigma.toExponential(3) : "N/A"}`),
+        triCompareLine,
+        polyFutureLine,
         kv("Heikin Ashi:", heikenLine.split(": ")[1] ?? heikenLine),
         kv("RSI:", rsiLine.split(": ")[1] ?? rsiLine),
         kv("MACD:", macdLine.split(": ")[1] ?? macdLine),
@@ -735,7 +841,10 @@ async function main() {
         marketDown,
         edge.edgeUp,
         edge.edgeDown,
-        rec.action === "ENTER" ? `${rec.side}:${rec.phase}:${rec.strength}` : "NO_TRADE"
+        rec.action === "ENTER" ? `${rec.side}:${rec.phase}:${rec.strength}` : "NO_TRADE",
+        polyProjection.futureUpCents,
+        polyProjection.edgeVsMarketUpCents,
+        polyProjection.strategy
       ]);
     } catch (err) {
       const causeCode = err?.cause?.code ? ` [${err.cause.code}]` : "";
