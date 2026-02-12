@@ -246,6 +246,18 @@ npm start
 
 ## Estrategia rápida (triple comparación)
 
+
+### Vista x4 (modo compacto automático)
+
+Si abres 4 terminales al mismo tiempo (cuadrícula x4), el bot activa un **modo compacto** cuando detecta ancho reducido.
+
+En ese modo siempre prioriza mostrar:
+- Precio de **Mercado 15m** (UP/DOWN)
+- Precio de **Chainlink**
+- Precio de **Binance**
+- `Poly futuro` + estrategia rápida
+
+
 El bot ahora calcula una comparación de 3 fuentes por moneda:
 
 - **Binance spot** (referencia de liquidez y micro-movimiento)

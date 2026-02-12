@@ -96,7 +96,7 @@ function centerText(text, width) {
   return " ".repeat(left) + text + " ".repeat(right);
 }
 
-const LABEL_W = 16;
+const LABEL_W = 12;
 function kv(label, value) {
   const l = padLabel(String(label), LABEL_W);
   return `${l}${value}`;
@@ -672,6 +672,7 @@ async function main() {
       }
 
       const priceToBeat = priceToBeatState.slug === marketSlug ? priceToBeatState.value : null;
+      const binanceVsStrikeShort = (spotPrice !== null && priceToBeat !== null) ? `${(spotPrice - priceToBeat) >= 0 ? "+" : "-"}$${Math.abs(spotPrice - priceToBeat).toFixed(2)}` : "-";
       const tSec = Math.max(1, Math.floor((timeLeftMin ?? 0) * 60));
       const sigmaRaw = estimateSigmaFromBinanceCloses(closes, CONFIG.quant.sigmaLookbackMinutes, CONFIG.quant.minSamples);
       const sigma = sigmaRaw ?? (CONFIG.quant.sigmaMin > 0 ? CONFIG.quant.sigmaMin : null);
@@ -761,11 +762,25 @@ async function main() {
         : "";
       const binanceSpotLine = `${binanceSpotBaseLine}${diffLine}`;
       const binanceSpotValue = binanceSpotLine.split(": ")[1] ?? binanceSpotLine;
-      const binanceVsStrike = (spotPrice !== null && priceToBeat !== null) ? `${(spotPrice - priceToBeat) >= 0 ? "+" : "-"}$${Math.abs(spotPrice - priceToBeat).toFixed(2)}` : "-";
+      const binanceVsStrike = binanceVsStrikeShort;
       const binanceSpotKvLine = kv(`${CONFIG.coin} (Binance):`, `${binanceSpotValue} | ΔK ${binanceVsStrike}`);
 
       const titleLine = poly.ok ? `${poly.market?.question ?? "-"}` : "-";
       const marketLine = kv("Mercado:", poly.ok ? (poly.market?.slug ?? "-") : "-");
+
+      const compactMode = screenWidth() <= 115;
+      const marketPriceLine = kv(
+        "Mercado 15m:",
+        `UP ${formatNumber(marketUp, 1)}¢ | DN ${formatNumber(marketDown, 1)}¢ | K ${priceToBeat !== null ? `$${formatNumber(priceToBeat, 2)}` : "-"}`
+      );
+      const chainlinkLine = kv(
+        "Chainlink:",
+        `${currentPrice !== null ? `$${formatNumber(currentPrice, 4)}` : "-"} | src ${chainlink?.source ?? "-"}`
+      );
+      const binanceLine = kv(
+        "Binance:",
+        `${spotPrice !== null ? `$${formatNumber(spotPrice, 4)}` : "-"} | ΔK ${binanceVsStrikeShort}`
+      );
 
       const timeColor = timeLeftMin >= 10 && timeLeftMin <= 15
         ? ANSI.green
@@ -784,44 +799,56 @@ async function main() {
               : ANSI.reset)
         : ANSI.reset;
 
-      const lines = [
-        titleLine,
-        marketLine,
-        kv("Tiempo restante:", `${timeColor}${fmtTimeLeft(timeLeftMin)}${ANSI.reset}`),
-        "",
-        sepLine(),
-        "",
-        kv("Modelo final:", predictValue),
-        kv("Modelo quant:", `${formatProbPct(quant?.pUp, 1)} / ${formatProbPct(quant?.pDown, 1)} | σ=${sigma !== null ? sigma.toExponential(3) : "N/A"}`),
-        triCompareLine,
-        polyFutureLine,
-        kv("Heikin Ashi:", heikenLine.split(": ")[1] ?? heikenLine),
-        kv("RSI:", rsiLine.split(": ")[1] ?? rsiLine),
-        kv("MACD:", macdLine.split(": ")[1] ?? macdLine),
-        kv("Variación 1/3:", deltaLine.split(": ")[1] ?? deltaLine),
-        kv("VWAP:", vwapLine.split(": ")[1] ?? vwapLine),
-        "",
-        sepLine(),
-        "",
-        kv("POLYMARKET:", polyHeaderValue),
-        liquidity !== null ? kv("Liquidez:", formatNumber(liquidity, 0)) : null,
-        settlementLeftMin !== null ? kv("Tiempo restante:", `${polyTimeLeftColor}${fmtTimeLeft(settlementLeftMin)}${ANSI.reset}`) : null,
-        priceToBeat !== null ? kv("Precio objetivo (K):", `$${formatNumber(priceToBeat, 4)}`) : kv("Precio objetivo (K):", `${ANSI.gray}-${ANSI.reset}`),
-        currentPriceLine,
-        kv("Chainlink src:", chainlink?.source ?? "-"),
-        "",
-        sepLine(),
-        "",
-        binanceSpotKvLine,
-        "",
-        sepLine(),
-        "",
-        kv("Coin | ET | Sesión:", `${ANSI.white}${CONFIG.coin}${ANSI.reset} | ${ANSI.white}${fmtEtTime(new Date())}${ANSI.reset} | ${ANSI.white}${getBtcSession(new Date())}${ANSI.reset}`),
-        kv("Edge U/D:", `${formatProbPct(edge.edgeUp,1)} / ${formatProbPct(edge.edgeDown,1)} | Rec: ${rec.action === "ENTER" ? rec.side : "NO_TRADE"}`),
-        "",
-        sepLine(),
-        centerText(`${ANSI.dim}${ANSI.gray}hecho por @krajekis${ANSI.reset}`, screenWidth())
-      ].filter((x) => x !== null);
+      const lines = compactMode
+        ? [
+          kv("Coin:", `${CONFIG.coin} | ${poly.ok ? (poly.market?.slug ?? "-") : "-"}`),
+          kv("Tiempo:", `${timeColor}${fmtTimeLeft(timeLeftMin)}${ANSI.reset}`),
+          marketPriceLine,
+          chainlinkLine,
+          binanceLine,
+          kv("Modelo:", `${formatProbPct(modelUp, 1)} / ${formatProbPct(modelDown, 1)} | σ ${sigma !== null ? sigma.toExponential(2) : "N/A"}`),
+          kv("Poly fut:", `${formatNumber(polyProjection.futureUpCents, 1)}¢ | edge ${polyProjection.edgeVsMarketUpCents === null ? '-' : `${polyProjection.edgeVsMarketUpCents >= 0 ? '+' : ''}${polyProjection.edgeVsMarketUpCents.toFixed(2)}¢`} | ${polyProjection.strategy}`),
+          kv("Rec:", `${rec.action === "ENTER" ? rec.side : "NO_TRADE"} | Edge ${formatProbPct(edge.edgeUp,1)}/${formatProbPct(edge.edgeDown,1)}`),
+          kv("ET:", `${fmtEtTime(new Date())} | ${getBtcSession(new Date())}`)
+        ]
+        : [
+          titleLine,
+          marketLine,
+          kv("Tiempo restante:", `${timeColor}${fmtTimeLeft(timeLeftMin)}${ANSI.reset}`),
+          "",
+          sepLine(),
+          "",
+          kv("Modelo final:", predictValue),
+          kv("Modelo quant:", `${formatProbPct(quant?.pUp, 1)} / ${formatProbPct(quant?.pDown, 1)} | σ=${sigma !== null ? sigma.toExponential(3) : "N/A"}`),
+          triCompareLine,
+          polyFutureLine,
+          kv("Heikin Ashi:", heikenLine.split(": ")[1] ?? heikenLine),
+          kv("RSI:", rsiLine.split(": ")[1] ?? rsiLine),
+          kv("MACD:", macdLine.split(": ")[1] ?? macdLine),
+          kv("Variación 1/3:", deltaLine.split(": ")[1] ?? deltaLine),
+          kv("VWAP:", vwapLine.split(": ")[1] ?? vwapLine),
+          "",
+          sepLine(),
+          "",
+          kv("POLYMARKET:", polyHeaderValue),
+          liquidity !== null ? kv("Liquidez:", formatNumber(liquidity, 0)) : null,
+          settlementLeftMin !== null ? kv("Tiempo restante:", `${polyTimeLeftColor}${fmtTimeLeft(settlementLeftMin)}${ANSI.reset}`) : null,
+          priceToBeat !== null ? kv("Precio objetivo (K):", `$${formatNumber(priceToBeat, 4)}`) : kv("Precio objetivo (K):", `${ANSI.gray}-${ANSI.reset}`),
+          currentPriceLine,
+          kv("Chainlink src:", chainlink?.source ?? "-"),
+          "",
+          sepLine(),
+          "",
+          binanceSpotKvLine,
+          "",
+          sepLine(),
+          "",
+          kv("Coin | ET | Sesión:", `${ANSI.white}${CONFIG.coin}${ANSI.reset} | ${ANSI.white}${fmtEtTime(new Date())}${ANSI.reset} | ${ANSI.white}${getBtcSession(new Date())}${ANSI.reset}`),
+          kv("Edge U/D:", `${formatProbPct(edge.edgeUp,1)} / ${formatProbPct(edge.edgeDown,1)} | Rec: ${rec.action === "ENTER" ? rec.side : "NO_TRADE"}`),
+          "",
+          sepLine(),
+          centerText(`${ANSI.dim}${ANSI.gray}hecho por @krajekis${ANSI.reset}`, screenWidth())
+        ];
 
       renderScreen(lines.join("\n") + "\n");
 
