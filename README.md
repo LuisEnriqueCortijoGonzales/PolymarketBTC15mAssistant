@@ -1,4 +1,4 @@
-# Asistente BTC 15m para Polymarket
+# Asistente 15m para Polymarket (BTC/ETH/SOL/XRP)
 
 Un asistente de trading en consola, en tiempo real, para los mercados de Polymarket **"Bitcoin Up or Down" de 15 minutos**.
 
@@ -17,6 +17,50 @@ Combina:
 
 
 ## Ejecutar desde terminal (paso a paso)
+
+
+### Checklist de pre-requisitos (recomendado antes de ejecutar)
+
+1) Verifica versión de Node y npm:
+
+```bash
+node -v
+npm -v
+```
+
+2) Instala dependencias del proyecto:
+
+```bash
+npm install
+```
+
+3) Define la moneda a ejecutar (`COIN`):
+
+- Valores válidos: `BTC`, `ETH`, `SOL`, `XRP`.
+- Si no defines `COIN`, el valor por defecto es `BTC`.
+
+Ejemplo PowerShell:
+
+```powershell
+$env:COIN = "ETH"
+```
+
+Ejemplo CMD:
+
+```cmd
+set COIN=ETH
+```
+
+4) Verifica conectividad de red saliente (muy importante):
+
+```bash
+node -e "fetch('https://api.binance.com/api/v3/time').then(()=>console.log('OK red')).catch(e=>console.error('ERROR red:', e.message, e.cause?.code || ''))"
+```
+
+Si este check falla, el bot puede arrancar pero mostrará errores `fetch failed` por entorno de red/proxy.
+
+5) Si trabajas detrás de proxy, define `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY` correctamente (ver sección de proxy más abajo).
+
 
 ### 1) Clonar el repositorio
 
@@ -85,9 +129,20 @@ Puedes definirlas en tu shell o crear un archivo `.env` y cargarlo con el métod
 
 ### Polymarket
 
+
+### Selección de moneda (multi-coin)
+
+- `COIN` (por defecto: `BTC`)
+  - Opciones: `BTC`, `ETH`, `SOL`, `XRP`.
+  - Cambia automáticamente:
+    - símbolo de Binance (`BTCUSDT`, `ETHUSDT`, `SOLUSDT`, `XRPUSDT`)
+    - filtro de mercado Polymarket (`slugPrefix` de cada coin)
+    - feed Chainlink USD en Polygon para cada coin
+
+
 - `POLYMARKET_AUTO_SELECT_LATEST` (por defecto: `true`)
   - Cuando está en `true`, selecciona automáticamente el mercado más reciente de 15m.
-- `POLYMARKET_SERIES_ID` (por defecto: `10192`)
+- `POLYMARKET_SERIES_ID (legacy/no usado para auto-select)` (por defecto: `10192`)
 - `POLYMARKET_SERIES_SLUG` (por defecto: `btc-up-or-down-15m`)
 - `POLYMARKET_SLUG` (opcional)
   - Si se define, el asistente apuntará a un slug de mercado específico.
@@ -95,7 +150,7 @@ Puedes definirlas en tu shell o crear un archivo `.env` y cargarlo con el métod
 
 ### Chainlink en Polygon (fallback)
 
-- `CHAINLINK_BTC_USD_AGGREGATOR`
+- `CHAINLINK_USD_AGGREGATOR`
   - Por defecto: `0xc907E116054Ad103354f2D350FD2514433D57F6f`
 
 RPC HTTP:

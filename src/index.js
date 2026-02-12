@@ -538,12 +538,9 @@ async function main() {
       const macdNarrative = narrativeFromSign(macd?.hist ?? null);
       const vwapNarrative = narrativeFromSign(vwapDist);
 
-      const pLong = modelUp;
-      const pShort = modelDown;
-      const predictNarrative = (pLong !== null && pShort !== null && Number.isFinite(pLong) && Number.isFinite(pShort))
-        ? (pLong > pShort ? "LONG" : pShort > pLong ? "SHORT" : "NEUTRAL")
-        : "NEUTRAL";
-      const predictValue = `${ANSI.green}LONG${ANSI.reset} ${ANSI.green}${formatProbPct(pLong, 0)}${ANSI.reset} / ${ANSI.red}SHORT${ANSI.reset} ${ANSI.red}${formatProbPct(pShort, 0)}${ANSI.reset}`;
+      let pLong = null;
+      let pShort = null;
+      let predictValue = `${ANSI.green}LONG${ANSI.reset} ${ANSI.green}${formatProbPct(pLong, 0)}${ANSI.reset} / ${ANSI.red}SHORT${ANSI.reset} ${ANSI.red}${formatProbPct(pShort, 0)}${ANSI.reset}`;
       const marketUpStr = `${marketUp ?? "-"}${marketUp === null || marketUp === undefined ? "" : "¢"}`;
       const marketDownStr = `${marketDown ?? "-"}${marketDown === null || marketDown === undefined ? "" : "¢"}`;
       const polyHeaderValue = `${ANSI.green}↑ SUBE${ANSI.reset} ${marketUpStr}  |  ${ANSI.red}↓ BAJA${ANSI.reset} ${marketDownStr}`;
@@ -565,7 +562,7 @@ async function main() {
       const vwapValue = `${formatNumber(vwapNow, 0)} (${formatPct(vwapDist, 2)}) | slope: ${vwapSlopeLabel}`;
       const vwapLine = formatNarrativeValue("VWAP", vwapValue, vwapNarrative);
 
-      const signal = rec.action === "ENTER" ? (rec.side === "UP" ? "COMPRAR SUBE" : "COMPRAR BAJA") : "SIN OPERACIÓN";
+      let signal = "SIN OPERACIÓN";
 
       const spreadUp = poly.ok ? poly.orderbook.up.spread : null;
       const spreadDown = poly.ok ? poly.orderbook.down.spread : null;
@@ -608,6 +605,10 @@ async function main() {
       if (CONFIG.quant.safeNoTradeWithoutQuant && (!quant || !priceToBeat || !currentPrice || !sigma)) {
         rec = { ...rec, action: "NO_TRADE", side: null, phase: "SAFE", strength: "LOW" };
       }
+      pLong = modelUp;
+      pShort = modelDown;
+      predictValue = `${ANSI.green}LONG${ANSI.reset} ${ANSI.green}${formatProbPct(pLong, 0)}${ANSI.reset} / ${ANSI.red}SHORT${ANSI.reset} ${ANSI.red}${formatProbPct(pShort, 0)}${ANSI.reset}`;
+      signal = rec.action === "ENTER" ? (rec.side === "UP" ? "COMPRAR SUBE" : "COMPRAR BAJA") : "SIN OPERACIÓN";
       const currentPriceBaseLine = colorPriceLine({
         label: "Precio actual",
         price: currentPrice,
