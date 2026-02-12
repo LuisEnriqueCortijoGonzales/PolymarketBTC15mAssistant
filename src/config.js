@@ -4,7 +4,7 @@ export const CONFIG = {
   gammaBaseUrl: "https://gamma-api.polymarket.com",
   clobBaseUrl: "https://clob.polymarket.com",
 
-  pollIntervalMs: 1_000,
+  pollIntervalMs: Number(process.env.POLL_INTERVAL_MS || 700),
   candleWindowMinutes: 15,
 
   vwapSlopeLookbackMinutes: 5,
