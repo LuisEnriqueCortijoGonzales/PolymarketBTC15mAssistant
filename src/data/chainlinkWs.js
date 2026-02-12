@@ -25,8 +25,8 @@ function toNumber(x) {
 }
 
 export function startChainlinkPriceStream({
-  aggregator = CONFIG.chainlink.btcUsdAggregator,
-  decimals = 8,
+  aggregator = CONFIG.chainlink.usdAggregator,
+  decimals = CONFIG.chainlink.decimals ?? 8,
   onUpdate
 } = {}) {
   const wssUrls = getWssCandidates();
