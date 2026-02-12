@@ -129,7 +129,7 @@ function marketHasSeriesSlug(market, seriesSlug) {
   return false;
 }
 
-export function filterBtcUpDown15mMarkets(markets, { seriesSlug, slugPrefix } = {}) {
+export function filterUpDownMarkets(markets, { seriesSlug, slugPrefix } = {}) {
   const prefix = (slugPrefix ?? "").toLowerCase();
   const wantedSeries = (seriesSlug ?? "").toLowerCase();
 
@@ -198,4 +198,20 @@ export function summarizeOrderBook(book, depthLevels = 5) {
     bidLiquidity,
     askLiquidity
   };
+}
+
+
+export async function fetchLiveMarketsForCoin({ slugPrefix, seriesSlug, maxPages = 3, pageSize = 200 } = {}) {
+  const out = [];
+  for (let page = 0; page < maxPages; page += 1) {
+    const offset = page * pageSize;
+    const batch = await fetchActiveMarkets({ limit: pageSize, offset });
+    if (!batch.length) break;
+
+    const filtered = filterUpDownMarkets(batch, { seriesSlug, slugPrefix });
+    out.push(...filtered);
+
+    if (batch.length < pageSize) break;
+  }
+  return out;
 }

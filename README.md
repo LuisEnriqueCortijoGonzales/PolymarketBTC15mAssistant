@@ -1,49 +1,93 @@
-# Polymarket BTC 15m Assistant
+# Asistente 15m para Polymarket (BTC/ETH/SOL/XRP)
 
-A real-time console trading assistant for Polymarket **"Bitcoin Up or Down" 15-minute** markets.
+Un asistente de trading en consola, en tiempo real, para los mercados de Polymarket **"Bitcoin Up or Down" de 15 minutos**.
 
-It combines:
-- Polymarket market selection + UP/DOWN prices + liquidity
-- Polymarket live WS **Chainlink BTC/USD CURRENT PRICE** (same feed shown on the Polymarket UI)
-- Fallback to on-chain Chainlink (Polygon) via HTTP/WSS RPC
-- Binance spot price for reference
-- Short-term TA snapshot (Heiken Ashi, RSI, MACD, VWAP, Delta 1/3m)
-- A simple live **Predict (LONG/SHORT %)** derived from the assistant’s current TA scoring
+Combina:
+- Selección de mercado en Polymarket + precios UP/DOWN + liquidez
+- WS en vivo de Polymarket para **PRECIO ACTUAL BTC/USD de Chainlink** (la misma fuente que muestra la UI de Polymarket)
+- Fallback a Chainlink on-chain (Polygon) vía RPC HTTP/WSS
+- Precio spot de Binance como referencia
+- Snapshot de análisis técnico de corto plazo (Heikin Ashi, RSI, MACD, VWAP, Variación 1/3m)
+- Un **Predict en vivo (LONG/SHORT %)** simple, derivado del scoring técnico actual del asistente
 
-## Requirements
+## Requisitos
 
 - Node.js **18+** (https://nodejs.org/en)
-- npm (comes with Node)
+- npm (viene con Node)
 
 
-## Run from terminal (step-by-step)
+## Ejecutar desde terminal (paso a paso)
 
-### 1) Clone the repository
+
+### Checklist de pre-requisitos (recomendado antes de ejecutar)
+
+1) Verifica versión de Node y npm:
 
 ```bash
-git clone https://github.com/FrondEnt/PolymarketBTC15mAssistant.git
+node -v
+npm -v
 ```
 
-Alternative (no git):
-
-- Click the green `<> Code` button on GitHub
-- Choose `Download ZIP`
-- Extract the ZIP
-- Open a terminal in the extracted project folder
-
-Then open a terminal in the project folder.
-
-### 2) Install dependencies
+2) Instala dependencias del proyecto:
 
 ```bash
 npm install
 ```
 
-### 3) (Optional) Set environment variables
+3) Define la moneda a ejecutar (`COIN`):
 
-You can run without extra config (defaults are included), but for more stable Chainlink fallback it’s recommended to set at least one Polygon RPC.
+- Valores válidos: `BTC`, `ETH`, `SOL`, `XRP`.
+- Si no defines `COIN`, el valor por defecto es `BTC`.
 
-#### Windows PowerShell (current terminal session)
+Ejemplo PowerShell:
+
+```powershell
+$env:COIN = "ETH"
+```
+
+Ejemplo CMD:
+
+```cmd
+set COIN=ETH
+```
+
+4) Verifica conectividad de red saliente (muy importante):
+
+```bash
+node -e "fetch('https://api.binance.com/api/v3/time').then(()=>console.log('OK red')).catch(e=>console.error('ERROR red:', e.message, e.cause?.code || ''))"
+```
+
+Si este check falla, el bot puede arrancar pero mostrará errores `fetch failed` por entorno de red/proxy.
+
+5) Si trabajas detrás de proxy, define `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY` correctamente (ver sección de proxy más abajo).
+
+
+### 1) Clonar el repositorio
+
+```bash
+git clone https://github.com/FrondEnt/PolymarketBTC15mAssistant.git
+```
+
+Alternativa (sin git):
+
+- Haz clic en el botón verde `<> Code` en GitHub
+- Elige `Download ZIP`
+- Extrae el ZIP
+- Abre una terminal en la carpeta del proyecto extraído
+
+Luego abre una terminal dentro de la carpeta del proyecto.
+
+### 2) Instalar dependencias
+
+```bash
+npm install
+```
+
+### 3) (Opcional) Configurar variables de entorno
+
+Puedes ejecutar sin configuración extra (ya hay valores por defecto), pero para un fallback de Chainlink más estable se recomienda definir al menos un RPC de Polygon.
+
+#### Windows PowerShell (sesión actual de terminal)
 
 ```powershell
 $env:POLYGON_RPC_URL = "https://polygon-rpc.com"
@@ -51,14 +95,14 @@ $env:POLYGON_RPC_URLS = "https://polygon-rpc.com,https://rpc.ankr.com/polygon"
 $env:POLYGON_WSS_URLS = "wss://polygon-bor-rpc.publicnode.com"
 ```
 
-Optional Polymarket settings:
+Configuración opcional de Polymarket:
 
 ```powershell
 $env:POLYMARKET_AUTO_SELECT_LATEST = "true"
-# $env:POLYMARKET_SLUG = "btc-updown-15m-..."   # pin a specific market
+# $env:POLYMARKET_SLUG = "btc-updown-15m-..."   # fija un mercado específico
 ```
 
-#### Windows CMD (current terminal session)
+#### Windows CMD (sesión actual de terminal)
 
 ```cmd
 set POLYGON_RPC_URL=https://polygon-rpc.com
@@ -66,64 +110,75 @@ set POLYGON_RPC_URLS=https://polygon-rpc.com,https://rpc.ankr.com/polygon
 set POLYGON_WSS_URLS=wss://polygon-bor-rpc.publicnode.com
 ```
 
-Optional Polymarket settings:
+Configuración opcional de Polymarket:
 
 ```cmd
 set POLYMARKET_AUTO_SELECT_LATEST=true
 REM set POLYMARKET_SLUG=btc-updown-15m-...
 ```
 
-Notes:
-- These environment variables apply only to the current terminal window.
-- If you want permanent env vars, set them via Windows System Environment Variables or use a `.env` loader of your choice.
+Notas:
+- Estas variables de entorno aplican solo a la ventana actual de terminal.
+- Si quieres variables permanentes, configúralas en las Variables de Entorno del sistema en Windows o usa un cargador de `.env` de tu preferencia.
 
-## Configuration
+## Configuración
 
-This project reads configuration from environment variables.
+Este proyecto lee su configuración desde variables de entorno.
 
-You can set them in your shell, or create a `.env` file and load it using your preferred method.
+Puedes definirlas en tu shell o crear un archivo `.env` y cargarlo con el método que prefieras.
 
 ### Polymarket
 
-- `POLYMARKET_AUTO_SELECT_LATEST` (default: `true`)
-  - When `true`, automatically picks the latest 15m market.
-- `POLYMARKET_SERIES_ID` (default: `10192`)
-- `POLYMARKET_SERIES_SLUG` (default: `btc-up-or-down-15m`)
-- `POLYMARKET_SLUG` (optional)
-  - If set, the assistant will target a specific market slug.
-- `POLYMARKET_LIVE_WS_URL` (default: `wss://ws-live-data.polymarket.com`)
 
-### Chainlink on Polygon (fallback)
+### Selección de moneda (multi-coin)
 
-- `CHAINLINK_BTC_USD_AGGREGATOR`
-  - Default: `0xc907E116054Ad103354f2D350FD2514433D57F6f`
+- `COIN` (por defecto: `BTC`)
+  - Opciones: `BTC`, `ETH`, `SOL`, `XRP`.
+  - Cambia automáticamente:
+    - símbolo de Binance (`BTCUSDT`, `ETHUSDT`, `SOLUSDT`, `XRPUSDT`)
+    - filtro de mercado Polymarket (`slugPrefix` de cada coin)
+    - feed Chainlink USD en Polygon para cada coin
 
-HTTP RPC:
-- `POLYGON_RPC_URL` (default: `https://polygon-rpc.com`)
-- `POLYGON_RPC_URLS` (optional, comma-separated)
-  - Example: `https://polygon-rpc.com,https://rpc.ankr.com/polygon`
 
-WSS RPC (optional but recommended for more real-time fallback):
-- `POLYGON_WSS_URL` (optional)
-- `POLYGON_WSS_URLS` (optional, comma-separated)
+- `POLYMARKET_AUTO_SELECT_LATEST` (por defecto: `true`)
+  - Cuando está en `true`, selecciona automáticamente el mercado más reciente de 15m.
+- `POLYMARKET_SERIES_ID (legacy/no usado para auto-select)` (por defecto: `10192`)
+- `POLYMARKET_SERIES_SLUG` (por defecto: `btc-up-or-down-15m`)
+- `POLYMARKET_SLUG` (opcional)
+  - Si se define, el asistente apuntará a un slug de mercado específico.
+- `POLYMARKET_LIVE_WS_URL` (por defecto: `wss://ws-live-data.polymarket.com`)
 
-### Proxy support
+### Chainlink en Polygon (fallback)
 
-The bot supports HTTP(S) proxies for both HTTP requests (fetch) and WebSocket connections.
+- `CHAINLINK_USD_AGGREGATOR`
+  - Por defecto: `0xc907E116054Ad103354f2D350FD2514433D57F6f`
 
-Supported env vars (standard):
+RPC HTTP:
+- `POLYGON_RPC_URL` (por defecto: `https://polygon-rpc.com`)
+- `POLYGON_RPC_URLS` (opcional, separado por comas)
+  - Ejemplo: `https://polygon-rpc.com,https://rpc.ankr.com/polygon`
+
+RPC WSS (opcional, pero recomendado para fallback más en tiempo real):
+- `POLYGON_WSS_URL` (opcional)
+- `POLYGON_WSS_URLS` (opcional, separado por comas)
+
+### Soporte de proxy
+
+El bot soporta proxies HTTP(S) tanto para solicitudes HTTP (fetch) como para conexiones WebSocket.
+
+Variables de entorno soportadas (estándar):
 
 - `HTTPS_PROXY` / `https_proxy`
 - `HTTP_PROXY` / `http_proxy`
 - `ALL_PROXY` / `all_proxy`
 
-Examples:
+Ejemplos:
 
 PowerShell:
 
 ```powershell
 $env:HTTPS_PROXY = "http://127.0.0.1:8080"
-# or
+# o
 $env:ALL_PROXY = "socks5://127.0.0.1:1080"
 ```
 
@@ -131,56 +186,56 @@ CMD:
 
 ```cmd
 set HTTPS_PROXY=http://127.0.0.1:8080
-REM or
+REM o
 set ALL_PROXY=socks5://127.0.0.1:1080
 ```
 
-#### Proxy with username + password (simple guide)
+#### Proxy con usuario + contraseña (guía simple)
 
-1) Take your proxy host and port (example: `1.2.3.4:8080`).
+1) Toma el host y puerto de tu proxy (ejemplo: `1.2.3.4:8080`).
 
-2) Add your login and password in the URL:
+2) Agrega tu usuario y contraseña en la URL:
 
-- HTTP/HTTPS proxy:
-  - `http://USERNAME:PASSWORD@HOST:PORT`
-- SOCKS5 proxy:
-  - `socks5://USERNAME:PASSWORD@HOST:PORT`
+- Proxy HTTP/HTTPS:
+  - `http://USUARIO:CONTRASEÑA@HOST:PUERTO`
+- Proxy SOCKS5:
+  - `socks5://USUARIO:CONTRASEÑA@HOST:PUERTO`
 
-3) Set it in the terminal and run the bot.
+3) Defínelo en la terminal y ejecuta el bot.
 
 PowerShell:
 
 ```powershell
-$env:HTTPS_PROXY = "http://USERNAME:PASSWORD@HOST:PORT"
+$env:HTTPS_PROXY = "http://USUARIO:CONTRASEÑA@HOST:PUERTO"
 npm start
 ```
 
 CMD:
 
 ```cmd
-set HTTPS_PROXY=http://USERNAME:PASSWORD@HOST:PORT
+set HTTPS_PROXY=http://USUARIO:CONTRASEÑA@HOST:PUERTO
 npm start
 ```
 
-Important: if your password contains special characters like `@` or `:` you must URL-encode it.
+Importante: si tu contraseña contiene caracteres especiales como `@` o `:`, debes codificarla en formato URL.
 
-Example:
+Ejemplo:
 
-- password: `p@ss:word`
-- encoded: `p%40ss%3Aword`
-- proxy URL: `http://user:p%40ss%3Aword@1.2.3.4:8080`
+- contraseña: `p@ss:word`
+- codificada: `p%40ss%3Aword`
+- URL de proxy: `http://user:p%40ss%3Aword@1.2.3.4:8080`
 
-## Run
+## Ejecutar
 
 ```bash
 npm start
 ```
 
-### Stop
+### Detener
 
-Press `Ctrl + C` in the terminal.
+Presiona `Ctrl + C` en la terminal.
 
-### Update to latest version
+### Actualizar a la última versión
 
 ```bash
 git pull
@@ -188,16 +243,53 @@ npm install
 npm start
 ```
 
-## Notes / Troubleshooting
 
-- If you see no Chainlink updates:
-  - Polymarket WS might be temporarily unavailable. The bot falls back to Chainlink on-chain price via Polygon RPC.
-  - Ensure at least one working Polygon RPC URL is configured.
-- If the console looks like it “spams” lines:
-  - The renderer uses `readline.cursorTo` + `clearScreenDown` for a stable, static screen, but some terminals may still behave differently.
+## Estrategia rápida (triple comparación)
 
-## Safety
 
-This is not financial advice. Use at your own risk.
+### Vista x4 (modo compacto automático)
 
-created by @krajekis
+Si abres 4 terminales al mismo tiempo (cuadrícula x4), el bot activa un **modo compacto** cuando detecta ancho reducido.
+
+En ese modo siempre prioriza mostrar:
+- Precio de **Mercado 15m** (UP/DOWN)
+- Precio de **Chainlink**
+- Precio de **Binance**
+- `Poly futuro` + estrategia rápida
+
+
+El bot ahora calcula una comparación de 3 fuentes por moneda:
+
+- **Binance spot** (referencia de liquidez y micro-movimiento)
+- **Chainlink directo** (fuente canónica de resolución)
+- **Polymarket 15m** (precio actual implícito de UP/DOWN)
+
+Con estas 3 fuentes estima un **"Poly futuro"** (precio esperado en centavos del lado UP) y un edge en centavos respecto al precio actual de mercado.
+
+En pantalla verás:
+
+- `Tri-precio`: Binance / Chainlink / Poly UP actual
+- `Poly futuro`: precio proyectado UP, edge estimado y acción rápida sugerida
+
+Acciones sugeridas:
+
+- `BUY_UP_FAST` cuando el valor futuro proyectado de UP supera materialmente al precio actual de UP.
+- `BUY_DOWN_FAST` cuando el valor futuro proyectado de UP queda materialmente por debajo del precio actual de UP.
+- `HOLD` si no hay ventaja suficiente o faltan datos.
+
+> Importante: es una estrategia de alta frecuencia y riesgo alto; usa tamaño pequeño y valida siempre spread/liquidez.
+
+
+## Notas / Solución de problemas
+
+- Si no ves actualizaciones de Chainlink:
+  - Puede que el WS de Polymarket esté temporalmente no disponible. El bot hace fallback al precio on-chain de Chainlink vía RPC de Polygon.
+  - Asegúrate de tener al menos una URL de RPC de Polygon funcionando.
+- Si la consola parece que “spamea” líneas:
+  - El render usa `readline.cursorTo` + `clearScreenDown` para mantener una pantalla estática y estable, pero algunos terminales pueden comportarse distinto.
+
+## Seguridad
+
+Esto no es asesoría financiera. Úsalo bajo tu propio riesgo.
+
+hecho por @krajekis
