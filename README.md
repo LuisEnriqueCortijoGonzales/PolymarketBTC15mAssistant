@@ -294,6 +294,35 @@ Acciones sugeridas:
 
 ### Módulo de compras/ventas automáticas (Polymarket)
 
+
+### Modo simulación vs modo real
+
+Comportamiento de ejecución:
+
+- `POLY_TRADING_ENABLED=false`  **=> simulación obligatoria**
+  - Ejecuta toda la estrategia (scalp + hold + cierres),
+  - No envía órdenes reales,
+  - Registra eventos en `logs/trade_execution_log.csv` para evaluar viabilidad.
+
+- `POLY_TRADING_ENABLED=true` y `POLY_TRADING_DRY_RUN=true`  **=> dry-run**
+  - No envía órdenes reales,
+  - Registra payloads y decisiones en el log.
+
+- `POLY_TRADING_ENABLED=true` y `POLY_TRADING_DRY_RUN=false`  **=> real**
+  - Intenta enviar órdenes al CLOB endpoint.
+
+### Datos de cuenta/API Polymarket (Gamma/CLOB)
+
+Según la documentación de Polymarket (Gamma Markets API y CLOB), usa en tu `.env`:
+
+- `POLY_TRADING_API_URL=https://clob.polymarket.com`
+- `POLYMARKET_API_KEY`
+- `POLYMARKET_API_SECRET`
+- `POLYMARKET_API_PASSPHRASE`
+
+El archivo `env_plantilla` ya viene preparado para completar estos campos.
+
+
 El bot incluye un módulo de ejecución automática de órdenes rápidas basado en la señal `Scalp`:
 
 - `BUY_UP_FAST_SELL_HIGH`

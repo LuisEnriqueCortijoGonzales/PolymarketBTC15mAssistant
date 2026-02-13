@@ -90,7 +90,7 @@ export const CONFIG = {
     apiKey: process.env.POLYMARKET_API_KEY || "",
     apiSecret: process.env.POLYMARKET_API_SECRET || "",
     apiPassphrase: process.env.POLYMARKET_API_PASSPHRASE || "",
-    defaultOrderSizeUsd: Number(process.env.POLY_TRADING_ORDER_SIZE_USD || 15),
+    defaultOrderSizeUsd: Number(process.env.POLY_TRADING_ORDER_SIZE_USD || 1),
     minEdgeCents: Number(process.env.POLY_TRADING_MIN_EDGE_CENTS || 1.5),
     cooldownMs: Number(process.env.POLY_TRADING_COOLDOWN_MS || 90_000)
   },
