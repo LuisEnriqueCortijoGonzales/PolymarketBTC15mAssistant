@@ -264,17 +264,20 @@ El bot ahora calcula una comparación de 3 fuentes por moneda:
 - **Chainlink directo** (fuente canónica de resolución)
 - **Polymarket 15m** (precio actual implícito de UP/DOWN)
 
-Con estas 3 fuentes estima un **"Poly futuro"** (precio esperado en centavos del lado UP) y un edge en centavos respecto al precio actual de mercado.
+Con estas 3 fuentes estima un **"Poly futuro"** (precio esperado en centavos del lado UP/DN) y un edge en centavos respecto al precio actual de mercado.
+
+Además, cuando Polymarket no entrega `clobTokenIds` en algunos ciclos, el bot ahora usa fallback a `outcomePrices` (Gamma) para no quedar en `UP - / DN -`.
+
 
 En pantalla verás:
 
 - `Tri-precio`: Binance / Chainlink / Poly UP actual
-- `Poly futuro`: precio proyectado UP, edge estimado y acción rápida sugerida
+- `Poly futuro`: precio proyectado UP/DN, edge estimado (ΔUP/ΔDN) y acción rápida sugerida
 
 Acciones sugeridas:
 
-- `BUY_UP_FAST` cuando el valor futuro proyectado de UP supera materialmente al precio actual de UP.
-- `BUY_DOWN_FAST` cuando el valor futuro proyectado de UP queda materialmente por debajo del precio actual de UP.
+- `BUY_UP_FAST_SELL_HIGH` cuando el valor futuro de UP supera al precio actual de UP con margen suficiente.
+- `BUY_DOWN_FAST_SELL_HIGH` cuando el valor futuro de DOWN supera al precio actual de DOWN con margen suficiente.
 - `HOLD` si no hay ventaja suficiente o faltan datos.
 
 > Importante: es una estrategia de alta frecuencia y riesgo alto; usa tamaño pequeño y valida siempre spread/liquidez.

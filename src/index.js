@@ -226,12 +226,18 @@ function computePolyFutureProjection({
 
   const clamped = Math.max(0.001, Math.min(0.999, futureUpProb));
   const futureUpCents = clamped * 100;
-  const edgeVsMarketUpCents = marketUpProb === null ? null : (futureUpCents - (marketUpProb * 100));
+  const futureDownCents = (1 - clamped) * 100;
+
+  const marketUpCents = marketUpProb === null ? null : (marketUpProb * 100);
+  const marketDownCents = marketUpProb === null ? null : ((1 - marketUpProb) * 100);
+
+  const edgeVsMarketUpCents = marketUpCents === null ? null : (futureUpCents - marketUpCents);
+  const edgeVsMarketDownCents = marketDownCents === null ? null : (futureDownCents - marketDownCents);
 
   let strategy = "HOLD";
-  if (edgeVsMarketUpCents !== null) {
-    if (edgeVsMarketUpCents >= 2.5) strategy = "BUY_UP_FAST";
-    else if (edgeVsMarketUpCents <= -2.5) strategy = "BUY_DOWN_FAST";
+  if (edgeVsMarketUpCents !== null && edgeVsMarketDownCents !== null) {
+    if (edgeVsMarketUpCents >= 1.5 && edgeVsMarketUpCents >= edgeVsMarketDownCents) strategy = "BUY_UP_FAST_SELL_HIGH";
+    else if (edgeVsMarketDownCents >= 1.5 && edgeVsMarketDownCents > edgeVsMarketUpCents) strategy = "BUY_DOWN_FAST_SELL_HIGH";
   }
 
   return {
@@ -239,7 +245,11 @@ function computePolyFutureProjection({
     marketUpProb,
     futureUpProb: clamped,
     futureUpCents,
+    futureDownCents,
+    marketUpCents,
+    marketDownCents,
     edgeVsMarketUpCents,
+    edgeVsMarketDownCents,
     strategy
   };
 }
@@ -416,12 +426,18 @@ async function fetchPolymarketSnapshot() {
 
   if (!upTokenId || !downTokenId) {
     return {
-      ok: false,
-      reason: "missing_token_ids",
+      ok: true,
+      reason: "missing_token_ids_fallback_gamma",
       market,
-      outcomes,
-      clobTokenIds,
-      outcomePrices
+      tokens: { upTokenId, downTokenId },
+      prices: {
+        up: Number.isFinite(gammaYes) ? gammaYes : null,
+        down: Number.isFinite(gammaNo) ? gammaNo : null
+      },
+      orderbook: {
+        up: { bestBid: Number(market.bestBid) || null, bestAsk: Number(market.bestAsk) || null, spread: Number(market.spread) || null, bidLiquidity: null, askLiquidity: null },
+        down: { bestBid: null, bestAsk: null, spread: Number(market.spread) || null, bidLiquidity: null, askLiquidity: null }
+      }
     };
   }
 
@@ -503,7 +519,9 @@ async function main() {
     "edge_down",
     "recommendation",
     "poly_future_up_cents",
-    "poly_future_edge_cents",
+    "poly_future_down_cents",
+    "poly_future_edge_up_cents",
+    "poly_future_edge_down_cents",
     "poly_future_strategy"
   ];
 
@@ -711,7 +729,7 @@ async function main() {
 
       const polyFutureLine = kv(
         "Poly futuro:",
-        `${formatNumber(polyProjection.futureUpCents, 1)}¢ UP | edge ${polyProjection.edgeVsMarketUpCents === null ? '-' : `${polyProjection.edgeVsMarketUpCents >= 0 ? '+' : ''}${polyProjection.edgeVsMarketUpCents.toFixed(2)}¢`} | ${polyProjection.strategy}`
+        `UP ${formatNumber(polyProjection.futureUpCents, 1)}¢ | DN ${formatNumber(polyProjection.futureDownCents, 1)}¢ | ΔUP ${polyProjection.edgeVsMarketUpCents === null ? '-' : `${polyProjection.edgeVsMarketUpCents >= 0 ? '+' : ''}${polyProjection.edgeVsMarketUpCents.toFixed(2)}¢`} | ΔDN ${polyProjection.edgeVsMarketDownCents === null ? '-' : `${polyProjection.edgeVsMarketDownCents >= 0 ? '+' : ''}${polyProjection.edgeVsMarketDownCents.toFixed(2)}¢`} | ${polyProjection.strategy}`
       );
 
       const currentPriceBaseLine = colorPriceLine({
@@ -807,8 +825,10 @@ async function main() {
           chainlinkLine,
           binanceLine,
           kv("Modelo:", `${formatProbPct(modelUp, 1)} / ${formatProbPct(modelDown, 1)} | σ ${sigma !== null ? sigma.toExponential(2) : "N/A"}`),
-          kv("Poly fut:", `${formatNumber(polyProjection.futureUpCents, 1)}¢ | edge ${polyProjection.edgeVsMarketUpCents === null ? '-' : `${polyProjection.edgeVsMarketUpCents >= 0 ? '+' : ''}${polyProjection.edgeVsMarketUpCents.toFixed(2)}¢`} | ${polyProjection.strategy}`),
+          kv("Poly fut:", `UP ${formatNumber(polyProjection.futureUpCents, 1)}¢ (Δ${polyProjection.edgeVsMarketUpCents === null ? '-' : `${polyProjection.edgeVsMarketUpCents >= 0 ? '+' : ''}${polyProjection.edgeVsMarketUpCents.toFixed(1)}`}) | DN ${formatNumber(polyProjection.futureDownCents, 1)}¢ (Δ${polyProjection.edgeVsMarketDownCents === null ? '-' : `${polyProjection.edgeVsMarketDownCents >= 0 ? '+' : ''}${polyProjection.edgeVsMarketDownCents.toFixed(1)}`})`),
+          kv("Scalp:", polyProjection.strategy),
           kv("Rec:", `${rec.action === "ENTER" ? rec.side : "NO_TRADE"} | Edge ${formatProbPct(edge.edgeUp,1)}/${formatProbPct(edge.edgeDown,1)}`),
+          kv("Mkt t/li:", `${settlementLeftMin !== null ? fmtTimeLeft(settlementLeftMin) : '-'} | ${liquidity !== null ? formatNumber(liquidity,0) : '-'}`),
           kv("ET:", `${fmtEtTime(new Date())} | ${getBtcSession(new Date())}`)
         ]
         : [
@@ -870,7 +890,9 @@ async function main() {
         edge.edgeDown,
         rec.action === "ENTER" ? `${rec.side}:${rec.phase}:${rec.strength}` : "NO_TRADE",
         polyProjection.futureUpCents,
+        polyProjection.futureDownCents,
         polyProjection.edgeVsMarketUpCents,
+        polyProjection.edgeVsMarketDownCents,
         polyProjection.strategy
       ]);
     } catch (err) {
