@@ -1,12 +1,11 @@
 import { CONFIG } from "./config.js";
 import { fetchKlines, fetchLastPrice } from "./data/binance.js";
-import { fetchChainlinkBtcUsd } from "./data/chainlink.js";
+import { fetchChainlinkUsd } from "./data/chainlink.js";
 import { startChainlinkPriceStream } from "./data/chainlinkWs.js";
 import { startPolymarketChainlinkPriceStream } from "./data/polymarketLiveWs.js";
 import {
   fetchMarketBySlug,
-  fetchLiveEventsBySeriesId,
-  flattenEventMarkets,
+  fetchLiveMarketsForCoin,
   pickLatestLiveMarket,
   fetchClobPrice,
   fetchOrderBook,
@@ -19,6 +18,7 @@ import { computeHeikenAshi, countConsecutive } from "./indicators/heikenAshi.js"
 import { detectRegime } from "./engines/regime.js";
 import { scoreDirection, applyTimeAwareness } from "./engines/probability.js";
 import { computeEdge, decide } from "./engines/edge.js";
+import { estimateSigmaFromBinanceCloses, probUpLognormal, blendProbabilities } from "./engines/quantModel.js";
 import { appendCsvRow, formatNumber, formatPct, getCandleWindowTiming, sleep } from "./utils.js";
 import { startBinanceTradeStream } from "./data/binanceWs.js";
 import fs from "node:fs";
@@ -96,7 +96,7 @@ function centerText(text, width) {
   return " ".repeat(left) + text + " ".repeat(right);
 }
 
-const LABEL_W = 16;
+const LABEL_W = 12;
 function kv(label, value) {
   const l = padLabel(String(label), LABEL_W);
   return `${l}${value}`;
@@ -165,6 +165,95 @@ function narrativeFromSlope(slope) {
   return Number(slope) > 0 ? "LONG" : "SHORT";
 }
 
+
+
+function computePolyFutureProjection({
+  marketUp,
+  marketDown,
+  chainlinkPrice,
+  binancePrice,
+  priceToBeat,
+  sigma,
+  tSec,
+  wModel = 0.7
+}) {
+  const mUp = Number(marketUp);
+  const mDown = Number(marketDown);
+  const s = Number(chainlinkPrice);
+  const b = Number(binancePrice);
+  const k = Number(priceToBeat);
+  const t = Number(tSec);
+  const sig = Number(sigma);
+
+  const hasMarket = Number.isFinite(mUp) || Number.isFinite(mDown);
+  const marketUpProb = Number.isFinite(mUp)
+    ? (mUp > 1 ? mUp / 100 : mUp)
+    : Number.isFinite(mDown)
+      ? (mDown > 1 ? 1 - (mDown / 100) : 1 - mDown)
+      : null;
+
+  if (!Number.isFinite(s) || !Number.isFinite(k) || !Number.isFinite(t) || t <= 0 || !Number.isFinite(sig) || sig <= 0) {
+    return {
+      ok: false,
+      marketUpProb,
+      futureUpProb: null,
+      futureUpCents: null,
+      edgeVsMarketUpCents: null,
+      strategy: hasMarket ? "HOLD" : "N/A"
+    };
+  }
+
+  const basis = (Number.isFinite(b) && s !== 0) ? ((b - s) / s) : 0;
+  const basisImpact = Math.max(-0.01, Math.min(0.01, basis * 0.35));
+  const sAdjusted = s * (1 + basisImpact);
+
+  const quant = probUpLognormal(sAdjusted, k, Math.max(1, t), sig);
+  if (!quant) {
+    return {
+      ok: false,
+      marketUpProb,
+      futureUpProb: null,
+      futureUpCents: null,
+      edgeVsMarketUpCents: null,
+      strategy: hasMarket ? "HOLD" : "N/A"
+    };
+  }
+
+  const modelUp = quant.pUp;
+  const futureUpProb = marketUpProb === null
+    ? modelUp
+    : (wModel * modelUp) + ((1 - wModel) * marketUpProb);
+
+  const clamped = Math.max(0.001, Math.min(0.999, futureUpProb));
+  const futureUpCents = clamped * 100;
+  const futureDownCents = (1 - clamped) * 100;
+
+  const marketUpCents = marketUpProb === null ? null : (marketUpProb * 100);
+  const marketDownCents = marketUpProb === null ? null : ((1 - marketUpProb) * 100);
+
+  const edgeVsMarketUpCents = marketUpCents === null ? null : (futureUpCents - marketUpCents);
+  const edgeVsMarketDownCents = marketDownCents === null ? null : (futureDownCents - marketDownCents);
+
+  let strategy = "HOLD";
+  if (edgeVsMarketUpCents !== null && edgeVsMarketDownCents !== null) {
+    if (edgeVsMarketUpCents >= 1.5 && edgeVsMarketUpCents >= edgeVsMarketDownCents) strategy = "BUY_UP_FAST_SELL_HIGH";
+    else if (edgeVsMarketDownCents >= 1.5 && edgeVsMarketDownCents > edgeVsMarketUpCents) strategy = "BUY_DOWN_FAST_SELL_HIGH";
+  }
+
+  return {
+    ok: true,
+    marketUpProb,
+    futureUpProb: clamped,
+    futureUpCents,
+    futureDownCents,
+    marketUpCents,
+    marketDownCents,
+    edgeVsMarketUpCents,
+    edgeVsMarketDownCents,
+    strategy
+  };
+}
+
 function formatProbPct(p, digits = 0) {
   if (p === null || p === undefined || !Number.isFinite(Number(p))) return "-";
   return `${(Number(p) * 100).toFixed(digits)}%`;
@@ -190,12 +279,12 @@ function getBtcSession(now = new Date()) {
   const inEurope = h >= 7 && h < 16;
   const inUs = h >= 13 && h < 22;
 
-  if (inEurope && inUs) return "Europe/US overlap";
-  if (inAsia && inEurope) return "Asia/Europe overlap";
-  if (inAsia) return "Asia";
-  if (inEurope) return "Europe";
-  if (inUs) return "US";
-  return "Off-hours";
+  if (inEurope && inUs) return "Solape Europa/EE. UU.";
+  if (inAsia && inEurope) return "Solape Asia/Europa";
+  if (inAsia) return "Sesión Asia";
+  if (inEurope) return "Sesión Europa";
+  if (inUs) return "Sesión EE. UU.";
+  return "Fuera de sesión";
 }
 
 function parsePriceToBeat(market) {
@@ -281,7 +370,7 @@ const marketCache = {
   fetchedAtMs: 0
 };
 
-async function resolveCurrentBtc15mMarket() {
+async function resolveCurrentCoin15mMarket() {
   if (CONFIG.polymarket.marketSlug) {
     return await fetchMarketBySlug(CONFIG.polymarket.marketSlug);
   }
@@ -293,8 +382,10 @@ async function resolveCurrentBtc15mMarket() {
     return marketCache.market;
   }
 
-  const events = await fetchLiveEventsBySeriesId({ seriesId: CONFIG.polymarket.seriesId, limit: 25 });
-  const markets = flattenEventMarkets(events);
+  const markets = await fetchLiveMarketsForCoin({
+    slugPrefix: CONFIG.polymarket.slugPrefix,
+    seriesSlug: CONFIG.polymarket.seriesSlug
+  });
   const picked = pickLatestLiveMarket(markets);
 
   marketCache.market = picked;
@@ -303,7 +394,7 @@ async function resolveCurrentBtc15mMarket() {
 }
 
 async function fetchPolymarketSnapshot() {
-  const market = await resolveCurrentBtc15mMarket();
+  const market = await resolveCurrentCoin15mMarket();
 
   if (!market) return { ok: false, reason: "market_not_found" };
 
@@ -335,12 +426,18 @@ async function fetchPolymarketSnapshot() {
 
   if (!upTokenId || !downTokenId) {
     return {
-      ok: false,
-      reason: "missing_token_ids",
+      ok: true,
+      reason: "missing_token_ids_fallback_gamma",
       market,
-      outcomes,
-      clobTokenIds,
-      outcomePrices
+      tokens: { upTokenId, downTokenId },
+      prices: {
+        up: Number.isFinite(gammaYes) ? gammaYes : null,
+        down: Number.isFinite(gammaNo) ? gammaNo : null
+      },
+      orderbook: {
+        up: { bestBid: Number(market.bestBid) || null, bestAsk: Number(market.bestAsk) || null, spread: Number(market.spread) || null, bidLiquidity: null, askLiquidity: null },
+        down: { bestBid: null, bestAsk: null, spread: Number(market.spread) || null, bidLiquidity: null, askLiquidity: null }
+      }
     };
   }
 
@@ -397,12 +494,16 @@ async function fetchPolymarketSnapshot() {
 
 async function main() {
   const binanceStream = startBinanceTradeStream({ symbol: CONFIG.symbol });
-  const polymarketLiveStream = startPolymarketChainlinkPriceStream({});
-  const chainlinkStream = startChainlinkPriceStream({});
+  const polymarketLiveStream = startPolymarketChainlinkPriceStream({ symbolIncludes: CONFIG.polymarket.livePriceSymbolIncludes });
+  const chainlinkStream = startChainlinkPriceStream({ aggregator: CONFIG.chainlink.usdAggregator, decimals: CONFIG.chainlink.decimals });
 
   let prevSpotPrice = null;
   let prevCurrentPrice = null;
   let priceToBeatState = { slug: null, value: null, setAtMs: null };
+  let netErrorStreak = 0;
+  let lastErrorSig = "";
+  let lastErrorLogAt = 0;
+
 
   const header = [
     "timestamp",
@@ -416,10 +517,16 @@ async function main() {
     "mkt_down",
     "edge_up",
     "edge_down",
-    "recommendation"
+    "recommendation",
+    "poly_future_up_cents",
+    "poly_future_down_cents",
+    "poly_future_edge_up_cents",
+    "poly_future_edge_down_cents",
+    "poly_future_strategy"
   ];
 
   while (true) {
+    const loopStartMs = Date.now();
     const timing = getCandleWindowTiming(CONFIG.candleWindowMinutes);
 
     const wsTick = binanceStream.getLast();
@@ -436,7 +543,7 @@ async function main() {
         ? Promise.resolve({ price: polymarketWsPrice, updatedAt: polymarketWsTick?.updatedAt ?? null, source: "polymarket_ws" })
         : chainlinkWsPrice !== null
           ? Promise.resolve({ price: chainlinkWsPrice, updatedAt: chainlinkWsTick?.updatedAt ?? null, source: "chainlink_ws" })
-          : fetchChainlinkBtcUsd();
+          : fetchChainlinkUsd();
 
       const [klines1m, klines5m, lastPrice, chainlink, poly] = await Promise.all([
         fetchKlines({ interval: "1m", limit: 240 }),
@@ -510,17 +617,14 @@ async function main() {
 
       const marketUp = poly.ok ? poly.prices.up : null;
       const marketDown = poly.ok ? poly.prices.down : null;
-      const edge = computeEdge({ modelUp: timeAware.adjustedUp, modelDown: timeAware.adjustedDown, marketYes: marketUp, marketNo: marketDown });
-
-      const rec = decide({ remainingMinutes: timeLeftMin, edgeUp: edge.edgeUp, edgeDown: edge.edgeDown, modelUp: timeAware.adjustedUp, modelDown: timeAware.adjustedDown });
 
       const vwapSlopeLabel = vwapSlope === null ? "-" : vwapSlope > 0 ? "UP" : vwapSlope < 0 ? "DOWN" : "FLAT";
 
       const macdLabel = macd === null
         ? "-"
         : macd.hist < 0
-          ? (macd.histDelta !== null && macd.histDelta < 0 ? "bearish (expanding)" : "bearish")
-          : (macd.histDelta !== null && macd.histDelta > 0 ? "bullish (expanding)" : "bullish");
+          ? (macd.histDelta !== null && macd.histDelta < 0 ? "bajista (acelerando)" : "bajista")
+          : (macd.histDelta !== null && macd.histDelta > 0 ? "alcista (acelerando)" : "alcista");
 
       const lastCandle = klines1m.length ? klines1m[klines1m.length - 1] : null;
       const lastClose = lastCandle?.close ?? null;
@@ -534,20 +638,15 @@ async function main() {
       const macdNarrative = narrativeFromSign(macd?.hist ?? null);
       const vwapNarrative = narrativeFromSign(vwapDist);
 
-      const pLong = timeAware?.adjustedUp ?? null;
-      const pShort = timeAware?.adjustedDown ?? null;
-      const predictNarrative = (pLong !== null && pShort !== null && Number.isFinite(pLong) && Number.isFinite(pShort))
-        ? (pLong > pShort ? "LONG" : pShort > pLong ? "SHORT" : "NEUTRAL")
-        : "NEUTRAL";
-      const predictValue = `${ANSI.green}LONG${ANSI.reset} ${ANSI.green}${formatProbPct(pLong, 0)}${ANSI.reset} / ${ANSI.red}SHORT${ANSI.reset} ${ANSI.red}${formatProbPct(pShort, 0)}${ANSI.reset}`;
-      const predictLine = `Predict: ${predictValue}`;
-
+      let pLong = null;
+      let pShort = null;
+      let predictValue = `${ANSI.green}LONG${ANSI.reset} ${ANSI.green}${formatProbPct(pLong, 0)}${ANSI.reset} / ${ANSI.red}SHORT${ANSI.reset} ${ANSI.red}${formatProbPct(pShort, 0)}${ANSI.reset}`;
       const marketUpStr = `${marketUp ?? "-"}${marketUp === null || marketUp === undefined ? "" : "¢"}`;
       const marketDownStr = `${marketDown ?? "-"}${marketDown === null || marketDown === undefined ? "" : "¢"}`;
-      const polyHeaderValue = `${ANSI.green}↑ UP${ANSI.reset} ${marketUpStr}  |  ${ANSI.red}↓ DOWN${ANSI.reset} ${marketDownStr}`;
+      const polyHeaderValue = `${ANSI.green}↑ SUBE${ANSI.reset} ${marketUpStr}  |  ${ANSI.red}↓ BAJA${ANSI.reset} ${marketDownStr}`;
 
       const heikenValue = `${consec.color ?? "-"} x${consec.count}`;
-      const heikenLine = formatNarrativeValue("Heiken Ashi", heikenValue, haNarrative);
+      const heikenLine = formatNarrativeValue("Heikin Ashi", heikenValue, haNarrative);
 
       const rsiArrow = rsiSlope !== null && rsiSlope < 0 ? "↓" : rsiSlope !== null && rsiSlope > 0 ? "↑" : "-";
       const rsiValue = `${formatNumber(rsiNow, 1)} ${rsiArrow}`;
@@ -558,16 +657,12 @@ async function main() {
       const delta1Narrative = narrativeFromSign(delta1m);
       const delta3Narrative = narrativeFromSign(delta3m);
       const deltaValue = `${colorByNarrative(formatSignedDelta(delta1m, lastClose), delta1Narrative)} | ${colorByNarrative(formatSignedDelta(delta3m, lastClose), delta3Narrative)}`;
-      const deltaLine = `Delta 1/3Min: ${deltaValue}`;
+      const deltaLine = `Variación 1/3 min: ${deltaValue}`;
 
       const vwapValue = `${formatNumber(vwapNow, 0)} (${formatPct(vwapDist, 2)}) | slope: ${vwapSlopeLabel}`;
       const vwapLine = formatNarrativeValue("VWAP", vwapValue, vwapNarrative);
 
-      const signal = rec.action === "ENTER" ? (rec.side === "UP" ? "BUY UP" : "BUY DOWN") : "NO TRADE";
-
-      const actionLine = rec.action === "ENTER"
-        ? `${rec.action} NOW (${rec.phase} ENTRY)`
-        : `NO TRADE (${rec.phase})`;
+      let signal = "SIN OPERACIÓN";
 
       const spreadUp = poly.ok ? poly.orderbook.up.spread : null;
       const spreadDown = poly.ok ? poly.orderbook.down.spread : null;
@@ -595,8 +690,50 @@ async function main() {
       }
 
       const priceToBeat = priceToBeatState.slug === marketSlug ? priceToBeatState.value : null;
+      const binanceVsStrikeShort = (spotPrice !== null && priceToBeat !== null) ? `${(spotPrice - priceToBeat) >= 0 ? "+" : "-"}$${Math.abs(spotPrice - priceToBeat).toFixed(2)}` : "-";
+      const tSec = Math.max(1, Math.floor((timeLeftMin ?? 0) * 60));
+      const sigmaRaw = estimateSigmaFromBinanceCloses(closes, CONFIG.quant.sigmaLookbackMinutes, CONFIG.quant.minSamples);
+      const sigma = sigmaRaw ?? (CONFIG.quant.sigmaMin > 0 ? CONFIG.quant.sigmaMin : null);
+      const quant = probUpLognormal(currentPrice, priceToBeat, tSec, sigma);
+      const blended = blendProbabilities(quant?.pUp ?? null, timeAware?.adjustedUp ?? null, CONFIG.quant.wQuant);
+
+      const modelUp = blended?.pUp ?? null;
+      const modelDown = blended?.pDown ?? null;
+
+      const edge = computeEdge({ modelUp, modelDown, marketYes: marketUp, marketNo: marketDown });
+      let rec = decide({ remainingMinutes: timeLeftMin, edgeUp: edge.edgeUp, edgeDown: edge.edgeDown, modelUp, modelDown });
+
+      if (CONFIG.quant.safeNoTradeWithoutQuant && (!quant || !priceToBeat || !currentPrice || !sigma)) {
+        rec = { ...rec, action: "NO_TRADE", side: null, phase: "SAFE", strength: "LOW" };
+      }
+      pLong = modelUp;
+      pShort = modelDown;
+      predictValue = `${ANSI.green}LONG${ANSI.reset} ${ANSI.green}${formatProbPct(pLong, 0)}${ANSI.reset} / ${ANSI.red}SHORT${ANSI.reset} ${ANSI.red}${formatProbPct(pShort, 0)}${ANSI.reset}`;
+      signal = rec.action === "ENTER" ? (rec.side === "UP" ? "COMPRAR SUBE" : "COMPRAR BAJA") : "SIN OPERACIÓN";
+
+      const polyProjection = computePolyFutureProjection({
+        marketUp,
+        marketDown,
+        chainlinkPrice: currentPrice,
+        binancePrice: spotPrice,
+        priceToBeat,
+        sigma,
+        tSec,
+        wModel: CONFIG.quant.wQuant
+      });
+
+      const triCompareLine = kv(
+        "Tri-precio:",
+        `Binance $${formatNumber(spotPrice, 4)} | Chainlink $${formatNumber(currentPrice, 4)} | Poly UP ${formatNumber(polyProjection?.marketUpProb !== null ? (polyProjection.marketUpProb * 100) : null, 1)}¢`
+      );
+
+      const polyFutureLine = kv(
+        "Poly futuro:",
+        `UP ${formatNumber(polyProjection.futureUpCents, 1)}¢ | DN ${formatNumber(polyProjection.futureDownCents, 1)}¢ | ΔUP ${polyProjection.edgeVsMarketUpCents === null ? '-' : `${polyProjection.edgeVsMarketUpCents >= 0 ? '+' : ''}${polyProjection.edgeVsMarketUpCents.toFixed(2)}¢`} | ΔDN ${polyProjection.edgeVsMarketDownCents === null ? '-' : `${polyProjection.edgeVsMarketDownCents >= 0 ? '+' : ''}${polyProjection.edgeVsMarketDownCents.toFixed(2)}¢`} | ${polyProjection.strategy}`
+      );
+
       const currentPriceBaseLine = colorPriceLine({
-        label: "CURRENT PRICE",
+        label: "Precio actual",
         price: currentPrice,
         prevPrice: prevCurrentPrice,
         decimals: 2,
@@ -617,7 +754,7 @@ async function main() {
         ? `${ANSI.gray}-${ANSI.reset}`
         : `${ptbDeltaColor}${ptbDelta > 0 ? "+" : ptbDelta < 0 ? "-" : ""}$${Math.abs(ptbDelta).toFixed(2)}${ANSI.reset}`;
       const currentPriceValue = currentPriceBaseLine.split(": ")[1] ?? currentPriceBaseLine;
-      const currentPriceLine = kv("CURRENT PRICE:", `${currentPriceValue} (${ptbDeltaText})`);
+      const currentPriceLine = kv("Chainlink (S):", `${currentPriceValue} (${ptbDeltaText})`);
 
       if (poly.ok && poly.market && priceToBeatState.value === null) {
         const slug = safeFileSlug(poly.market.slug || poly.market.id || "market");
@@ -632,7 +769,7 @@ async function main() {
         }
       }
 
-      const binanceSpotBaseLine = colorPriceLine({ label: "BTC (Binance)", price: spotPrice, prevPrice: prevSpotPrice, decimals: 0, prefix: "$" });
+      const binanceSpotBaseLine = colorPriceLine({ label: `${CONFIG.coin} (Binance)`, price: spotPrice, prevPrice: prevSpotPrice, decimals: 4, prefix: "$" });
       const diffLine = (spotPrice !== null && currentPrice !== null && Number.isFinite(spotPrice) && Number.isFinite(currentPrice) && currentPrice !== 0)
         ? (() => {
           const diffUsd = spotPrice - currentPrice;
@@ -643,10 +780,25 @@ async function main() {
         : "";
       const binanceSpotLine = `${binanceSpotBaseLine}${diffLine}`;
       const binanceSpotValue = binanceSpotLine.split(": ")[1] ?? binanceSpotLine;
-      const binanceSpotKvLine = kv("BTC (Binance):", binanceSpotValue);
+      const binanceVsStrike = binanceVsStrikeShort;
+      const binanceSpotKvLine = kv(`${CONFIG.coin} (Binance):`, `${binanceSpotValue} | ΔK ${binanceVsStrike}`);
 
       const titleLine = poly.ok ? `${poly.market?.question ?? "-"}` : "-";
-      const marketLine = kv("Market:", poly.ok ? (poly.market?.slug ?? "-") : "-");
+      const marketLine = kv("Mercado:", poly.ok ? (poly.market?.slug ?? "-") : "-");
+
+      const compactMode = screenWidth() <= 115;
+      const marketPriceLine = kv(
+        "Mercado 15m:",
+        `UP ${formatNumber(marketUp, 1)}¢ | DN ${formatNumber(marketDown, 1)}¢ | K ${priceToBeat !== null ? `$${formatNumber(priceToBeat, 2)}` : "-"}`
+      );
+      const chainlinkLine = kv(
+        "Chainlink:",
+        `${currentPrice !== null ? `$${formatNumber(currentPrice, 4)}` : "-"} | src ${chainlink?.source ?? "-"}`
+      );
+      const binanceLine = kv(
+        "Binance:",
+        `${spotPrice !== null ? `$${formatNumber(spotPrice, 4)}` : "-"} | ΔK ${binanceVsStrikeShort}`
+      );
 
       const timeColor = timeLeftMin >= 10 && timeLeftMin <= 15
         ? ANSI.green
@@ -655,8 +807,6 @@ async function main() {
           : timeLeftMin >= 0 && timeLeftMin < 5
             ? ANSI.red
             : ANSI.reset;
-      const timeLeftLine = `⏱ Time left: ${timeColor}${fmtTimeLeft(timeLeftMin)}${ANSI.reset}`;
-
       const polyTimeLeftColor = settlementLeftMin !== null
         ? (settlementLeftMin >= 10 && settlementLeftMin <= 15
           ? ANSI.green
@@ -667,66 +817,116 @@ async function main() {
               : ANSI.reset)
         : ANSI.reset;
 
-      const lines = [
-        titleLine,
-        marketLine,
-        kv("Time left:", `${timeColor}${fmtTimeLeft(timeLeftMin)}${ANSI.reset}`),
-        "",
-        sepLine(),
-        "",
-        kv("TA Predict:", predictValue),
-        kv("Heiken Ashi:", heikenLine.split(": ")[1] ?? heikenLine),
-        kv("RSI:", rsiLine.split(": ")[1] ?? rsiLine),
-        kv("MACD:", macdLine.split(": ")[1] ?? macdLine),
-        kv("Delta 1/3:", deltaLine.split(": ")[1] ?? deltaLine),
-        kv("VWAP:", vwapLine.split(": ")[1] ?? vwapLine),
-        "",
-        sepLine(),
-        "",
-        kv("POLYMARKET:", polyHeaderValue),
-        liquidity !== null ? kv("Liquidity:", formatNumber(liquidity, 0)) : null,
-        settlementLeftMin !== null ? kv("Time left:", `${polyTimeLeftColor}${fmtTimeLeft(settlementLeftMin)}${ANSI.reset}`) : null,
-        priceToBeat !== null ? kv("PRICE TO BEAT: ", `$${formatNumber(priceToBeat, 0)}`) : kv("PRICE TO BEAT: ", `${ANSI.gray}-${ANSI.reset}`),
-        currentPriceLine,
-        "",
-        sepLine(),
-        "",
-        binanceSpotKvLine,
-        "",
-        sepLine(),
-        "",
-        kv("ET | Session:", `${ANSI.white}${fmtEtTime(new Date())}${ANSI.reset} | ${ANSI.white}${getBtcSession(new Date())}${ANSI.reset}`),
-        "",
-        sepLine(),
-        centerText(`${ANSI.dim}${ANSI.gray}created by @krajekis${ANSI.reset}`, screenWidth())
-      ].filter((x) => x !== null);
+      const lines = compactMode
+        ? [
+          kv("Coin:", `${CONFIG.coin} | ${poly.ok ? (poly.market?.slug ?? "-") : "-"}`),
+          kv("Tiempo:", `${timeColor}${fmtTimeLeft(timeLeftMin)}${ANSI.reset}`),
+          marketPriceLine,
+          chainlinkLine,
+          binanceLine,
+          kv("Modelo:", `${formatProbPct(modelUp, 1)} / ${formatProbPct(modelDown, 1)} | σ ${sigma !== null ? sigma.toExponential(2) : "N/A"}`),
+          kv("Poly fut:", `UP ${formatNumber(polyProjection.futureUpCents, 1)}¢ (Δ${polyProjection.edgeVsMarketUpCents === null ? '-' : `${polyProjection.edgeVsMarketUpCents >= 0 ? '+' : ''}${polyProjection.edgeVsMarketUpCents.toFixed(1)}`}) | DN ${formatNumber(polyProjection.futureDownCents, 1)}¢ (Δ${polyProjection.edgeVsMarketDownCents === null ? '-' : `${polyProjection.edgeVsMarketDownCents >= 0 ? '+' : ''}${polyProjection.edgeVsMarketDownCents.toFixed(1)}`})`),
+          kv("Scalp:", polyProjection.strategy),
+          kv("Rec:", `${rec.action === "ENTER" ? rec.side : "NO_TRADE"} | Edge ${formatProbPct(edge.edgeUp,1)}/${formatProbPct(edge.edgeDown,1)}`),
+          kv("Mkt t/li:", `${settlementLeftMin !== null ? fmtTimeLeft(settlementLeftMin) : '-'} | ${liquidity !== null ? formatNumber(liquidity,0) : '-'}`),
+          kv("ET:", `${fmtEtTime(new Date())} | ${getBtcSession(new Date())}`)
+        ]
+        : [
+          titleLine,
+          marketLine,
+          kv("Tiempo restante:", `${timeColor}${fmtTimeLeft(timeLeftMin)}${ANSI.reset}`),
+          "",
+          sepLine(),
+          "",
+          kv("Modelo final:", predictValue),
+          kv("Modelo quant:", `${formatProbPct(quant?.pUp, 1)} / ${formatProbPct(quant?.pDown, 1)} | σ=${sigma !== null ? sigma.toExponential(3) : "N/A"}`),
+          triCompareLine,
+          polyFutureLine,
+          kv("Heikin Ashi:", heikenLine.split(": ")[1] ?? heikenLine),
+          kv("RSI:", rsiLine.split(": ")[1] ?? rsiLine),
+          kv("MACD:", macdLine.split(": ")[1] ?? macdLine),
+          kv("Variación 1/3:", deltaLine.split(": ")[1] ?? deltaLine),
+          kv("VWAP:", vwapLine.split(": ")[1] ?? vwapLine),
+          "",
+          sepLine(),
+          "",
+          kv("POLYMARKET:", polyHeaderValue),
+          liquidity !== null ? kv("Liquidez:", formatNumber(liquidity, 0)) : null,
+          settlementLeftMin !== null ? kv("Tiempo restante:", `${polyTimeLeftColor}${fmtTimeLeft(settlementLeftMin)}${ANSI.reset}`) : null,
+          priceToBeat !== null ? kv("Precio objetivo (K):", `$${formatNumber(priceToBeat, 4)}`) : kv("Precio objetivo (K):", `${ANSI.gray}-${ANSI.reset}`),
+          currentPriceLine,
+          kv("Chainlink src:", chainlink?.source ?? "-"),
+          "",
+          sepLine(),
+          "",
+          binanceSpotKvLine,
+          "",
+          sepLine(),
+          "",
+          kv("Coin | ET | Sesión:", `${ANSI.white}${CONFIG.coin}${ANSI.reset} | ${ANSI.white}${fmtEtTime(new Date())}${ANSI.reset} | ${ANSI.white}${getBtcSession(new Date())}${ANSI.reset}`),
+          kv("Edge U/D:", `${formatProbPct(edge.edgeUp,1)} / ${formatProbPct(edge.edgeDown,1)} | Rec: ${rec.action === "ENTER" ? rec.side : "NO_TRADE"}`),
+          "",
+          sepLine(),
+          centerText(`${ANSI.dim}${ANSI.gray}hecho por @krajekis${ANSI.reset}`, screenWidth())
+        ];
 
       renderScreen(lines.join("\n") + "\n");
 
       prevSpotPrice = spotPrice ?? prevSpotPrice;
       prevCurrentPrice = currentPrice ?? prevCurrentPrice;
 
+      netErrorStreak = 0;
       appendCsvRow("./logs/signals.csv", header, [
         new Date().toISOString(),
         timing.elapsedMinutes.toFixed(3),
         timeLeftMin.toFixed(3),
         regimeInfo.regime,
         signal,
-        timeAware.adjustedUp,
-        timeAware.adjustedDown,
+        modelUp,
+        modelDown,
         marketUp,
         marketDown,
         edge.edgeUp,
         edge.edgeDown,
-        rec.action === "ENTER" ? `${rec.side}:${rec.phase}:${rec.strength}` : "NO_TRADE"
+        rec.action === "ENTER" ? `${rec.side}:${rec.phase}:${rec.strength}` : "NO_TRADE",
+        polyProjection.futureUpCents,
+        polyProjection.futureDownCents,
+        polyProjection.edgeVsMarketUpCents,
+        polyProjection.edgeVsMarketDownCents,
+        polyProjection.strategy
       ]);
     } catch (err) {
-      console.log("────────────────────────────");
-      console.log(`Error: ${err?.message ?? String(err)}`);
-      console.log("────────────────────────────");
+      const causeCode = err?.cause?.code ? ` [${err.cause.code}]` : "";
+      const causeMsg = err?.cause?.message ? ` | causa: ${err.cause.message}` : "";
+      const errMsg = String(err?.message ?? String(err));
+      const sig = `${causeCode}:${causeMsg}:${errMsg}`;
+      const now = Date.now();
+
+      if (sig === lastErrorSig) {
+        netErrorStreak += 1;
+      } else {
+        netErrorStreak = 1;
+        lastErrorSig = sig;
+      }
+
+      const shouldLog = netErrorStreak === 1 || (now - lastErrorLogAt >= 5000);
+      if (shouldLog) {
+        lastErrorLogAt = now;
+        console.log("────────────────────────────");
+        console.log(`Error de red/datos${causeCode}: ${errMsg}${causeMsg}`);
+        if (netErrorStreak > 1) {
+          console.log(`Reintentos consecutivos: ${netErrorStreak}`);
+        }
+        console.log("Sugerencia: revisa conectividad/proxy del contenedor o aumenta timeout de smoke test.");
+        console.log("────────────────────────────");
+      }
     }
 
-    await sleep(CONFIG.pollIntervalMs);
+    const elapsedMs = Date.now() - loopStartMs;
+    const baseWaitMs = Math.max(100, CONFIG.pollIntervalMs - elapsedMs);
+    const backoffMs = netErrorStreak > 0 ? Math.min(4_000, 500 * netErrorStreak) : 0;
+    const waitMs = Math.max(baseWaitMs, backoffMs);
+    await sleep(waitMs);
   }
 }
 
