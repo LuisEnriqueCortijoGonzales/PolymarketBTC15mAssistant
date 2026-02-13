@@ -11,7 +11,7 @@ const iface = new ethers.Interface(AGGREGATOR_ABI);
 let preferredRpcUrl = null;
 
 let cachedDecimals = null;
-let cachedResult = { price: null, updatedAt: null, source: "chainlink" };
+let cachedResult = { price: null, updatedAt: null, source: "chainlink_rpc" };
 let cachedFetchedAtMs = 0;
 const MIN_FETCH_INTERVAL_MS = 2_000;
 const RPC_TIMEOUT_MS = 1_500;
@@ -31,9 +31,8 @@ function getRpcCandidates() {
 
 function getOrderedRpcs() {
   const rpcs = getRpcCandidates();
-  const pref = preferredRpcUrl;
-  if (pref && rpcs.includes(pref)) {
-    return [pref, ...rpcs.filter((x) => x !== pref)];
+  if (preferredRpcUrl && rpcs.includes(preferredRpcUrl)) {
+    return [preferredRpcUrl, ...rpcs.filter((x) => x !== preferredRpcUrl)];
   }
   return rpcs;
 }
@@ -50,14 +49,9 @@ async function jsonRpcRequest(rpcUrl, method, params) {
       signal: controller.signal
     });
 
-    if (!res.ok) {
-      throw new Error(`rpc_http_${res.status}`);
-    }
-
+    if (!res.ok) throw new Error(`rpc_http_${res.status}`);
     const data = await res.json();
-    if (data.error) {
-      throw new Error(`rpc_error_${data.error.code}`);
-    }
+    if (data.error) throw new Error(`rpc_error_${data.error.code}`);
     return data.result;
   } finally {
     clearTimeout(t);
@@ -85,8 +79,8 @@ async function fetchLatestRoundData(rpcUrl, aggregator) {
   };
 }
 
-export async function fetchChainlinkBtcUsd() {
-  if ((!CONFIG.chainlink.polygonRpcUrl && (!CONFIG.chainlink.polygonRpcUrls || CONFIG.chainlink.polygonRpcUrls.length === 0)) || !CONFIG.chainlink.btcUsdAggregator) {
+export async function fetchChainlinkUsd() {
+  if ((!CONFIG.chainlink.polygonRpcUrl && (!CONFIG.chainlink.polygonRpcUrls || CONFIG.chainlink.polygonRpcUrls.length === 0)) || !CONFIG.chainlink.usdAggregator) {
     return { price: null, updatedAt: null, source: "missing_config" };
   }
 
@@ -96,9 +90,9 @@ export async function fetchChainlinkBtcUsd() {
   }
 
   const rpcs = getOrderedRpcs();
-  if (rpcs.length === 0) return { price: null, updatedAt: null, source: "missing_config" };
+  if (!rpcs.length) return { price: null, updatedAt: null, source: "missing_config" };
 
-  const aggregator = CONFIG.chainlink.btcUsdAggregator;
+  const aggregator = CONFIG.chainlink.usdAggregator;
 
   for (const rpc of rpcs) {
     preferredRpcUrl = rpc;
@@ -115,16 +109,16 @@ export async function fetchChainlinkBtcUsd() {
       cachedResult = {
         price,
         updatedAt: Number(round.updatedAt) * 1000,
-        source: "chainlink"
+        source: "chainlink_rpc"
       };
       cachedFetchedAtMs = now;
-      preferredRpcUrl = rpc;
       return cachedResult;
     } catch {
       cachedDecimals = null;
-      continue;
     }
   }
 
   return cachedResult;
 }
+
+export const fetchChainlinkBtcUsd = fetchChainlinkUsd;

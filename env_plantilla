@@ -1,0 +1,52 @@
+# ==============================
+# Polymarket Assistant .env template
+# ==============================
+
+# Coin to run: BTC | ETH | SOL | XRP
+COIN=ETH
+
+# Optional market pin (leave empty for auto-select latest)
+POLYMARKET_SLUG=
+POLYMARKET_AUTO_SELECT_LATEST=true
+
+# Optional network tuning
+POLL_INTERVAL_MS=700
+QUANT_SIGMA_LOOKBACK_MIN=120
+QUANT_MIN_SAMPLES=30
+QUANT_WEIGHT=0.7
+QUANT_SIGMA_MIN=0
+SAFE_NO_TRADE_WITHOUT_QUANT=true
+
+# Polygon RPC/WSS (recommended)
+POLYGON_RPC_URL=https://polygon-rpc.com
+POLYGON_RPC_URLS=https://polygon-rpc.com,https://rpc.ankr.com/polygon
+POLYGON_WSS_URLS=wss://polygon-bor-rpc.publicnode.com
+
+# Proxy (only if needed)
+# HTTPS_PROXY=http://USER:PASS@HOST:PORT
+# HTTP_PROXY=http://USER:PASS@HOST:PORT
+# ALL_PROXY=socks5://USER:PASS@HOST:PORT
+
+# =====================================
+# AUTO-TRADING MODULE (USE WITH CAUTION)
+# =====================================
+# Enable automatic orders from scalping signal
+POLY_TRADING_ENABLED=false
+
+# Safety mode (recommended true first):
+# - true  => simulate order payload (no live order)
+# - false => send real order requests
+POLY_TRADING_DRY_RUN=true
+
+# Polymarket CLOB API endpoint
+POLY_TRADING_API_URL=https://clob.polymarket.com
+
+# Account/API credentials (set your real values)
+POLYMARKET_API_KEY=
+POLYMARKET_API_SECRET=
+POLYMARKET_API_PASSPHRASE=
+
+# Auto-order controls
+POLY_TRADING_ORDER_SIZE_USD=1
+POLY_TRADING_MIN_EDGE_CENTS=1.5
+POLY_TRADING_COOLDOWN_MS=90000
