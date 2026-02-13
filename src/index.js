@@ -25,6 +25,7 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { applyGlobalProxyFromEnv } from "./net/proxy.js";
+import { createPolymarketTrader } from "./trading/polymarketTrader.js";
 
 function countVwapCrosses(closes, vwapSeries, lookback) {
   if (closes.length < lookback || vwapSeries.length < lookback) return null;
@@ -500,6 +501,17 @@ async function main() {
   let prevSpotPrice = null;
   let prevCurrentPrice = null;
   let priceToBeatState = { slug: null, value: null, setAtMs: null };
+  const trader = createPolymarketTrader({
+    enabled: CONFIG.trading.enabled,
+    dryRun: CONFIG.trading.dryRun,
+    apiUrl: CONFIG.trading.apiUrl,
+    apiKey: CONFIG.trading.apiKey,
+    apiSecret: CONFIG.trading.apiSecret,
+    apiPassphrase: CONFIG.trading.apiPassphrase,
+    defaultSizeUsd: CONFIG.trading.defaultOrderSizeUsd
+  });
+  const tradeCooldownByMarket = new Map();
+  let lastTradeStatus = "OFF";
   let netErrorStreak = 0;
   let lastErrorSig = "";
   let lastErrorLogAt = 0;
@@ -522,7 +534,8 @@ async function main() {
     "poly_future_down_cents",
     "poly_future_edge_up_cents",
     "poly_future_edge_down_cents",
-    "poly_future_strategy"
+    "poly_future_strategy",
+    "auto_trade_status"
   ];
 
   while (true) {
@@ -732,6 +745,56 @@ async function main() {
         `UP ${formatNumber(polyProjection.futureUpCents, 1)}¢ | DN ${formatNumber(polyProjection.futureDownCents, 1)}¢ | ΔUP ${polyProjection.edgeVsMarketUpCents === null ? '-' : `${polyProjection.edgeVsMarketUpCents >= 0 ? '+' : ''}${polyProjection.edgeVsMarketUpCents.toFixed(2)}¢`} | ΔDN ${polyProjection.edgeVsMarketDownCents === null ? '-' : `${polyProjection.edgeVsMarketDownCents >= 0 ? '+' : ''}${polyProjection.edgeVsMarketDownCents.toFixed(2)}¢`} | ${polyProjection.strategy}`
       );
 
+      const canTradeFast = trader.enabled && poly.ok && poly.tokens?.upTokenId && poly.tokens?.downTokenId;
+      if (canTradeFast) {
+        const marketKey = `${marketSlug}:${polyProjection.strategy}`;
+        const lastTradeTs = tradeCooldownByMarket.get(marketKey) ?? 0;
+        const edgeUpOk = Number(polyProjection.edgeVsMarketUpCents) >= CONFIG.trading.minEdgeCents;
+        const edgeDownOk = Number(polyProjection.edgeVsMarketDownCents) >= CONFIG.trading.minEdgeCents;
+        const cooldownOk = (Date.now() - lastTradeTs) >= CONFIG.trading.cooldownMs;
+
+        let tradeSide = null;
+        let tokenId = null;
+        let maxPrice = null;
+
+        if (polyProjection.strategy === "BUY_UP_FAST_SELL_HIGH" && edgeUpOk) {
+          tradeSide = "UP";
+          tokenId = poly.tokens.upTokenId;
+          maxPrice = polyProjection.futureUpCents;
+        } else if (polyProjection.strategy === "BUY_DOWN_FAST_SELL_HIGH" && edgeDownOk) {
+          tradeSide = "DOWN";
+          tokenId = poly.tokens.downTokenId;
+          maxPrice = polyProjection.futureDownCents;
+        }
+
+        if (tradeSide && tokenId && cooldownOk) {
+          const tradeRes = await trader.placeScalpOrder({
+            marketSlug,
+            tokenId,
+            side: tradeSide,
+            maxPriceCents: maxPrice,
+            sizeUsd: CONFIG.trading.defaultOrderSizeUsd,
+            note: `scalp:${polyProjection.strategy}`,
+            metadata: {
+              coin: CONFIG.coin,
+              edgeUp: polyProjection.edgeVsMarketUpCents,
+              edgeDown: polyProjection.edgeVsMarketDownCents
+            }
+          });
+
+          if (tradeRes.ok) {
+            tradeCooldownByMarket.set(marketKey, Date.now());
+            lastTradeStatus = tradeRes.dryRun
+              ? `DRY ${tradeSide} ${formatNumber(CONFIG.trading.defaultOrderSizeUsd, 2)}$`
+              : `LIVE ${tradeSide} ${formatNumber(CONFIG.trading.defaultOrderSizeUsd, 2)}$`;
+          } else {
+            lastTradeStatus = `ERR ${tradeRes.error ?? tradeRes.reason ?? "trade_fail"}`;
+          }
+        }
+      } else {
+        lastTradeStatus = trader.enabled ? "WAIT_DATA" : "OFF";
+      }
+
       const currentPriceBaseLine = colorPriceLine({
         label: "Precio actual",
         price: currentPrice,
@@ -827,6 +890,7 @@ async function main() {
           kv("Modelo:", `${formatProbPct(modelUp, 1)} / ${formatProbPct(modelDown, 1)} | σ ${sigma !== null ? sigma.toExponential(2) : "N/A"}`),
           kv("Poly fut:", `UP ${formatNumber(polyProjection.futureUpCents, 1)}¢ (Δ${polyProjection.edgeVsMarketUpCents === null ? '-' : `${polyProjection.edgeVsMarketUpCents >= 0 ? '+' : ''}${polyProjection.edgeVsMarketUpCents.toFixed(1)}`}) | DN ${formatNumber(polyProjection.futureDownCents, 1)}¢ (Δ${polyProjection.edgeVsMarketDownCents === null ? '-' : `${polyProjection.edgeVsMarketDownCents >= 0 ? '+' : ''}${polyProjection.edgeVsMarketDownCents.toFixed(1)}`})`),
           kv("Scalp:", polyProjection.strategy),
+          kv("Trade:", lastTradeStatus),
           kv("Rec:", `${rec.action === "ENTER" ? rec.side : "NO_TRADE"} | Edge ${formatProbPct(edge.edgeUp,1)}/${formatProbPct(edge.edgeDown,1)}`),
           kv("Mkt t/li:", `${settlementLeftMin !== null ? fmtTimeLeft(settlementLeftMin) : '-'} | ${liquidity !== null ? formatNumber(liquidity,0) : '-'}`),
           kv("ET:", `${fmtEtTime(new Date())} | ${getBtcSession(new Date())}`)
@@ -865,6 +929,7 @@ async function main() {
           "",
           kv("Coin | ET | Sesión:", `${ANSI.white}${CONFIG.coin}${ANSI.reset} | ${ANSI.white}${fmtEtTime(new Date())}${ANSI.reset} | ${ANSI.white}${getBtcSession(new Date())}${ANSI.reset}`),
           kv("Edge U/D:", `${formatProbPct(edge.edgeUp,1)} / ${formatProbPct(edge.edgeDown,1)} | Rec: ${rec.action === "ENTER" ? rec.side : "NO_TRADE"}`),
+          kv("Trade auto:", `${lastTradeStatus} | ${trader.dryRun ? "DRY" : "LIVE"}`),
           "",
           sepLine(),
           centerText(`${ANSI.dim}${ANSI.gray}hecho por @krajekis${ANSI.reset}`, screenWidth())
@@ -893,7 +958,8 @@ async function main() {
         polyProjection.futureDownCents,
         polyProjection.edgeVsMarketUpCents,
         polyProjection.edgeVsMarketDownCents,
-        polyProjection.strategy
+        polyProjection.strategy,
+        lastTradeStatus
       ]);
     } catch (err) {
       const causeCode = err?.cause?.code ? ` [${err.cause.code}]` : "";

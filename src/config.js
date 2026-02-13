@@ -81,7 +81,20 @@ export const CONFIG = {
     polygonWssUrl: process.env.POLYGON_WSS_URL || "",
     usdAggregator: process.env.CHAINLINK_USD_AGGREGATOR || coinProfile.chainlinkAggregator,
     decimals: Number(process.env.CHAINLINK_DECIMALS || coinProfile.chainlinkDecimals)
-  }
+  },
+
+  trading: {
+    enabled: (process.env.POLY_TRADING_ENABLED || "false").toLowerCase() === "true",
+    dryRun: (process.env.POLY_TRADING_DRY_RUN || "true").toLowerCase() === "true",
+    apiUrl: process.env.POLY_TRADING_API_URL || "https://clob.polymarket.com",
+    apiKey: process.env.POLYMARKET_API_KEY || "",
+    apiSecret: process.env.POLYMARKET_API_SECRET || "",
+    apiPassphrase: process.env.POLYMARKET_API_PASSPHRASE || "",
+    defaultOrderSizeUsd: Number(process.env.POLY_TRADING_ORDER_SIZE_USD || 15),
+    minEdgeCents: Number(process.env.POLY_TRADING_MIN_EDGE_CENTS || 1.5),
+    cooldownMs: Number(process.env.POLY_TRADING_COOLDOWN_MS || 90_000)
+  },
+
 };
 
 export { COIN_MAP };

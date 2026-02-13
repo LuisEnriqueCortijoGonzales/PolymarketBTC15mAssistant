@@ -34,6 +34,14 @@ npm -v
 npm install
 ```
 
+2.1) Crea tu archivo de entorno desde la plantilla:
+
+```bash
+cp env_plantilla .env
+```
+
+Luego completa en `.env` tus credenciales/API de Polymarket si vas a usar trading automático.
+
 3) Define la moneda a ejecutar (`COIN`):
 
 - Valores válidos: `BTC`, `ETH`, `SOL`, `XRP`.
@@ -281,6 +289,34 @@ Acciones sugeridas:
 - `HOLD` si no hay ventaja suficiente o faltan datos.
 
 > Importante: es una estrategia de alta frecuencia y riesgo alto; usa tamaño pequeño y valida siempre spread/liquidez.
+
+
+
+### Módulo de compras/ventas automáticas (Polymarket)
+
+El bot incluye un módulo de ejecución automática de órdenes rápidas basado en la señal `Scalp`:
+
+- `BUY_UP_FAST_SELL_HIGH`
+- `BUY_DOWN_FAST_SELL_HIGH`
+- `HOLD`
+
+Variables clave:
+
+- `POLY_TRADING_ENABLED` (`true/false`)
+- `POLY_TRADING_DRY_RUN` (`true/false`)
+- `POLY_TRADING_API_URL`
+- `POLYMARKET_API_KEY`
+- `POLYMARKET_API_SECRET`
+- `POLYMARKET_API_PASSPHRASE`
+- `POLY_TRADING_ORDER_SIZE_USD`
+- `POLY_TRADING_MIN_EDGE_CENTS`
+- `POLY_TRADING_COOLDOWN_MS`
+
+Recomendación operativa:
+
+1. Empieza con `POLY_TRADING_ENABLED=true` y `POLY_TRADING_DRY_RUN=true`.
+2. Verifica en pantalla la línea `Trade` / `Trade auto`.
+3. Solo cuando valides el flujo, cambia a `POLY_TRADING_DRY_RUN=false`.
 
 
 ## Notas / Solución de problemas
