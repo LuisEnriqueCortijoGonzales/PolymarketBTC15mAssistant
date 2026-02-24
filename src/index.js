@@ -200,7 +200,9 @@ function computePolyFutureProjection({
       marketUpProb,
       futureUpProb: null,
       futureUpCents: null,
+      futureDownCents: null,
       edgeVsMarketUpCents: null,
+      edgeVsMarketDownCents: null,
       strategy: hasMarket ? "HOLD" : "N/A"
     };
   }
@@ -216,7 +218,9 @@ function computePolyFutureProjection({
       marketUpProb,
       futureUpProb: null,
       futureUpCents: null,
+      futureDownCents: null,
       edgeVsMarketUpCents: null,
+      edgeVsMarketDownCents: null,
       strategy: hasMarket ? "HOLD" : "N/A"
     };
   }
@@ -259,6 +263,12 @@ function computePolyFutureProjection({
 function formatProbPct(p, digits = 0) {
   if (p === null || p === undefined || !Number.isFinite(Number(p))) return "-";
   return `${(Number(p) * 100).toFixed(digits)}%`;
+}
+
+function formatSignedCents(x, digits = 2) {
+  const n = Number(x);
+  if (!Number.isFinite(n)) return "-";
+  return `${n >= 0 ? "+" : ""}${n.toFixed(digits)}`;
 }
 
 function fmtEtTime(now = new Date()) {
@@ -745,7 +755,7 @@ async function main() {
 
       const polyFutureLine = kv(
         "Poly futuro:",
-        `UP ${formatNumber(polyProjection.futureUpCents, 1)}¢ | DN ${formatNumber(polyProjection.futureDownCents, 1)}¢ | ΔUP ${polyProjection.edgeVsMarketUpCents === null ? '-' : `${polyProjection.edgeVsMarketUpCents >= 0 ? '+' : ''}${polyProjection.edgeVsMarketUpCents.toFixed(2)}¢`} | ΔDN ${polyProjection.edgeVsMarketDownCents === null ? '-' : `${polyProjection.edgeVsMarketDownCents >= 0 ? '+' : ''}${polyProjection.edgeVsMarketDownCents.toFixed(2)}¢`} | ${polyProjection.strategy}`
+        `UP ${formatNumber(polyProjection.futureUpCents, 1)}¢ | DN ${formatNumber(polyProjection.futureDownCents, 1)}¢ | ΔUP ${formatSignedCents(polyProjection.edgeVsMarketUpCents, 2)}¢ | ΔDN ${formatSignedCents(polyProjection.edgeVsMarketDownCents, 2)}¢ | ${polyProjection.strategy}`
       );
 
       const canExecuteStrategy = poly.ok && poly.tokens?.upTokenId && poly.tokens?.downTokenId;
@@ -901,7 +911,7 @@ async function main() {
           chainlinkLine,
           binanceLine,
           kv("Modelo:", `${formatProbPct(modelUp, 1)} / ${formatProbPct(modelDown, 1)} | σ ${sigma !== null ? sigma.toExponential(2) : "N/A"}`),
-          kv("Poly fut:", `UP ${formatNumber(polyProjection.futureUpCents, 1)}¢ (Δ${polyProjection.edgeVsMarketUpCents === null ? '-' : `${polyProjection.edgeVsMarketUpCents >= 0 ? '+' : ''}${polyProjection.edgeVsMarketUpCents.toFixed(1)}`}) | DN ${formatNumber(polyProjection.futureDownCents, 1)}¢ (Δ${polyProjection.edgeVsMarketDownCents === null ? '-' : `${polyProjection.edgeVsMarketDownCents >= 0 ? '+' : ''}${polyProjection.edgeVsMarketDownCents.toFixed(1)}`})`),
+          kv("Poly fut:", `UP ${formatNumber(polyProjection.futureUpCents, 1)}¢ (Δ${formatSignedCents(polyProjection.edgeVsMarketUpCents, 1)}) | DN ${formatNumber(polyProjection.futureDownCents, 1)}¢ (Δ${formatSignedCents(polyProjection.edgeVsMarketDownCents, 1)})`),
           kv("Scalp:", `${polyProjection.strategy} | ${strategyDecision.phase}`),
           kv("Trade:", lastTradeStatus),
           kv("Rec:", `${rec.action === "ENTER" ? rec.side : "NO_TRADE"} | Edge ${formatProbPct(edge.edgeUp,1)}/${formatProbPct(edge.edgeDown,1)}`),
