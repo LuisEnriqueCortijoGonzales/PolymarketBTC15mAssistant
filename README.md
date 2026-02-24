@@ -233,6 +233,10 @@ Ejemplo:
 - codificada: `p%40ss%3Aword`
 - URL de proxy: `http://user:p%40ss%3Aword@1.2.3.4:8080`
 
+## Tutorial de falso trading (simulación)
+
+Consulta la guía paso a paso en `TUTORIAL_FALSO_TRADING.md`.
+
 ## Ejecutar
 
 ```bash
@@ -251,6 +255,13 @@ npm install
 npm start
 ```
 
+
+## Simulación de compra/venta (15m)
+
+- El bot ya ejecuta **compras y ventas simuladas** sobre mercados de 15 minutos.
+- Para mantenerlo en simulación segura: `POLY_TRADING_ENABLED=false` o `POLY_TRADING_DRY_RUN=true`.
+- Las operaciones simuladas se registran en `logs/trade_execution_log.csv` con acciones `buy` y `sell`.
+- La estrategia ahora también cierra posiciones tipo HOLD antes del cierre del mercado (salida simulada).
 
 ## Estrategia rápida (triple comparación)
 

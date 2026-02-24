@@ -25,6 +25,7 @@ export function createStrategyEngine() {
         didScalp: false,
         didHold: false,
         scalpClosed: false,
+        holdClosed: false,
         scalpPos: null,
         holdPos: null,
         pendingAggressive: null
@@ -100,6 +101,32 @@ export function createStrategyEngine() {
       }
     }
 
+    // 0.1) Exit hold near market close (simulated sell before settlement)
+    if (st.holdPos) {
+      const ageSec = (Date.now() - st.holdPos.openedAtMs) / 1000;
+      const holdSidePrice = st.holdPos.side === "UP" ? mUp : mDown;
+      if (t <= 5) {
+        actions.push({ type: "CLOSE", tag: "HOLD", side: st.holdPos.side, sizeUsd: 1, reason: "FINAL_EXIT_5s" });
+        st.holdPos = null;
+        st.holdClosed = true;
+      } else if (holdSidePrice !== null) {
+        const pnl = holdSidePrice - st.holdPos.entryPrice;
+        if (pnl >= 0.03) {
+          actions.push({ type: "CLOSE", tag: "HOLD", side: st.holdPos.side, sizeUsd: 1, reason: "TP_+0.03" });
+          st.holdPos = null;
+          st.holdClosed = true;
+        } else if (pnl <= -0.03) {
+          actions.push({ type: "CLOSE", tag: "HOLD", side: st.holdPos.side, sizeUsd: 1, reason: "SL_-0.03" });
+          st.holdPos = null;
+          st.holdClosed = true;
+        } else if (ageSec > 240) {
+          actions.push({ type: "CLOSE", tag: "HOLD", side: st.holdPos.side, sizeUsd: 1, reason: "TIMEOUT_240s" });
+          st.holdPos = null;
+          st.holdClosed = true;
+        }
+      }
+    }
+
     const exposureUsd = (st.scalpPos ? 1 : 0) + (st.holdPos ? 1 : 0);
 
     // 1) Binance adelantado (arming)
@@ -157,8 +184,8 @@ export function createStrategyEngine() {
       }
     }
 
-    // 4) Hold final <=60
-    if (!st.didHold && !st.holdPos && t <= 60 && spreadOk && liquidityOk && hasValidSigma && exposureUsd < 2 && s !== null && k !== null) {
+    // 4) Hold final <=60 (solo si queda tiempo suficiente para no abrir/cerrar en el mismo tick)
+    if (!st.didHold && !st.holdPos && !st.holdClosed && t <= 60 && t > 5 && spreadOk && liquidityOk && hasValidSigma && exposureUsd < 2 && s !== null && k !== null) {
       const volWindow = sig * Math.sqrt(t);
       const distance = s - k;
       const absDistance = Math.abs(distance);
@@ -182,8 +209,8 @@ export function createStrategyEngine() {
       }
     }
 
-    // 5) Regla forzada hold a 45s
-    if (!st.didHold && !st.holdPos && t <= 45 && spreadOk && liquidityOk && hasValidSigma && exposureUsd < 2) {
+    // 5) Regla forzada hold a 45s (también requiere >5s restantes)
+    if (!st.didHold && !st.holdPos && !st.holdClosed && t <= 45 && t > 5 && spreadOk && liquidityOk && hasValidSigma && exposureUsd < 2) {
       if ((pUp ?? -Infinity) >= (pDown ?? -Infinity)) {
         actions.push({ type: "OPEN", tag: "HOLD", side: "UP", sizeUsd: 1, reason: "FORCED_HOLD_45" });
         st.didHold = true;
